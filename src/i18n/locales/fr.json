@@ -1,0 +1,376 @@
+{
+  "app": {
+    "name": "Chronicle",
+    "tagline": "Votre histoire familiale, préservée pour toujours"
+  },
+  "onboarding": {
+    "createIdentity": {
+      "title": "Créez votre identité",
+      "nameLabel": "Votre nom",
+      "namePlaceholder": "Entrez votre nom complet",
+      "continueButton": "Continuer"
+    },
+    "recoveryPhrase": {
+      "title": "Sauvegardez votre phrase de récupération",
+      "instruction": "Notez ces mots dans l'ordre et conservez-les en lieu sûr. C'est le seul moyen de récupérer votre compte si vous perdez l'accès.",
+      "warningTitle": "Important",
+      "warning": "Si vous perdez votre phrase de récupération et l'accès à cet appareil, votre compte ne pourra pas être récupéré.",
+      "confirmButton": "J'ai sauvegardé ma phrase de récupération",
+      "copyButton": "Copier dans le presse-papiers",
+      "copiedConfirm": "Copié !"
+    },
+    "startTree": {
+      "title": "Démarrez votre arbre généalogique",
+      "instruction": "Ajoutez-vous d'abord, puis commencez à ajouter vos ancêtres.",
+      "addSelfButton": "M'ajouter",
+      "skipButton": "Je ferai ça plus tard"
+    },
+    "importKey": {
+      "title": "Importer une identité existante",
+      "instruction": "Entrez votre phrase de récupération ou clé privée pour restaurer votre compte.",
+      "inputLabel": "Phrase de récupération ou clé privée",
+      "inputPlaceholder": "Entrez votre phrase de 12 mots ou la clé nsec1…",
+      "importButton": "Importer",
+      "errorInvalid": "Cela ne ressemble pas à une phrase de récupération ou clé privée valide. Veuillez vérifier et réessayer."
+    }
+  },
+  "profile": {
+    "addPerson": {
+      "titleSelf": "M'ajouter",
+      "titleAncestor": "Ajouter un membre de la famille",
+      "nameLabel": "Nom complet",
+      "namePlaceholder": "ex. Thomas O'Brien",
+      "bornLabel": "Année de naissance",
+      "bornPlaceholder": "ex. 1930",
+      "birthplaceLabel": "Lieu de naissance",
+      "birthplacePlaceholder": "ex. Cork, Irlande",
+      "diedLabel": "Année de décès",
+      "diedPlaceholder": "Laisser vide si vivant",
+      "evidenceLabel": "Source ou preuve",
+      "evidencePlaceholder": "ex. bible familiale, acte de naissance",
+      "saveButton": "Enregistrer",
+      "cancelButton": "Annuler"
+    },
+    "card": {
+      "name": "Nom",
+      "born": "Né(e)",
+      "died": "Décédé(e)",
+      "birthplace": "Lieu de naissance",
+      "deathplace": "Lieu de décès",
+      "occupation": "Profession",
+      "noData": "Aucune information enregistrée pour l'instant",
+      "editButton": "Ajouter des informations",
+      "retractedBadge": "Retiré",
+      "conflictBadge": "Contesté",
+      "evidenceBadge": "Source citée"
+    },
+    "conflict": {
+      "softTitle": "Un autre enregistrement existe",
+      "hardTitle": "Contesté — votre avis est demandé",
+      "resolvedTitle": "Résolu",
+      "viewAllClaims": "Voir tous les enregistrements",
+      "endorseButton": "Soutenir cet enregistrement",
+      "retractButton": "Retirer mon enregistrement"
+    }
+  },
+  "search": {
+    "placeholder": "Rechercher par nom, année ou lieu",
+    "noResults": "Aucun membre de la famille trouvé",
+    "resultsCount_one": "{{count}} résultat",
+    "resultsCount_other": "{{count}} résultats"
+  },
+  "export": {
+    "title": "Exporter votre arbre",
+    "gedcomButton": "Exporter en GEDCOM",
+    "archiveButton": "Exporter l'archive Chronicle",
+    "gedcomDescription": "Compatible avec Ancestry, FamilySearch et d'autres applications de généalogie.",
+    "archiveDescription": "Sauvegarde complète incluant tous les enregistrements, claims et clés. Conservez ce fichier en lieu sûr."
+  },
+  "errors": {
+    "generic": "Une erreur s'est produite. Veuillez réessayer.",
+    "keyGenFailed": "Impossible de générer votre identité. Veuillez réessayer.",
+    "saveFailed": "Impossible d'enregistrer. Vérifiez votre stockage et réessayez."
+  },
+  "nav": {
+    "tree": "Arbre généalogique",
+    "search": "Rechercher",
+    "settings": "Paramètres",
+    "graph": "Arbre généalogique",
+    "about": "À propos"
+  },
+  "settings": {
+    "title": "Paramètres",
+    "recoveryContacts": {
+      "title": "Contacts de récupération",
+      "description": "Membres de confiance de la famille qui peuvent vous aider à récupérer votre compte si nécessaire.",
+      "addButton": "Ajouter un contact de récupération",
+      "noContacts": "Aucun contact de récupération défini. Ajoutez ici des membres de confiance."
+    },
+    "language": {
+      "title": "Langue",
+      "description": "Choisissez votre langue préférée."
+    },
+    "exportSection": "Export et sauvegarde",
+    "broadcast": {
+      "title": "Diffusion",
+      "localTitle": "Local uniquement (privé)",
+      "localDesc": "Les événements sont stockés sur votre appareil uniquement. Rien ne quitte votre relais local.",
+      "sharedTitle": "Relais familial partagé",
+      "sharedDesc": "Publiez les événements sur un relais partagé pour que les membres connectés reçoivent les mises à jour automatiquement.",
+      "discoveryTitle": "Relais de découverte (public)",
+      "discoveryDesc": "Publiez également des événements de découverte minimaux (fragment de nom + adresse du relais uniquement) sur un relais public pour que des parents éloignés puissent vous trouver.",
+      "saveUrl": "Enregistrer l'URL du relais",
+      "saved": "Enregistré",
+      "syncSyncing": "Synchronisation des événements depuis le relais…",
+      "syncDone": "Synchronisation terminée.",
+      "syncError": "La synchronisation a rencontré une erreur."
+    },
+    "relay": {
+      "title": "Connexions aux relais",
+      "noConnections": "Aucune connexion de relais active. Démarrez votre session pour vous connecter.",
+      "localLabel": "Relais local",
+      "remoteLabel": "Relais distant"
+    }
+  },
+  "tree": {
+    "nodeCount": "{{count}} personnes affichées",
+    "truncated": "Arbre tronqué — zoomez pour explorer les branches",
+    "hint": "Faites glisser pour déplacer · Faites défiler pour zoomer · Cliquez sur un nœud pour voir le profil",
+    "noRoot": "Sélectionnez une personne dans la liste pour voir son arbre généalogique.",
+    "viewInGraph": "Voir dans l'arbre généalogique",
+    "legend": {
+      "confirmed": "Confirmé",
+      "unconfirmed": "Non confirmé",
+      "sensitive": "Sensible",
+      "conflict": "Conflit"
+    }
+  },
+  "relationship": {
+    "parent": "Parent",
+    "child": "Enfant",
+    "spouse": "Conjoint(e)",
+    "sibling": "Frère/Sœur",
+    "grandparent": "Grand-parent",
+    "grandchild": "Petit-enfant",
+    "subtype": {
+      "adopted": "Adopté(e)",
+      "non-paternity": "Non-paternité",
+      "unknown-parent": "Parent inconnu",
+      "given-up": "Donné(e) à l'adoption"
+    },
+    "sensitive": "Relation sensible"
+  },
+  "match": {
+    "title": "Correspondance possible trouvée",
+    "description": "Ces deux enregistrements pourraient concerner la même personne.",
+    "confidence": "Confiance",
+    "reasons": {
+      "same-name": "Même nom",
+      "similar-name": "Nom similaire",
+      "same-birth-year": "Même année de naissance",
+      "same-birthplace": "Même lieu de naissance",
+      "shared-relative": "Parent commun",
+      "same-death-year": "Même année de décès"
+    },
+    "confirm": "Oui, même personne",
+    "dismiss": "Pas la même personne"
+  },
+  "invite": {
+    "title": "Se connecter avec la famille",
+    "generate": {
+      "title": "Inviter un membre de la famille",
+      "instruction": "Partagez ce code avec un membre de la famille pour connecter vos arbres.",
+      "codeLabel": "Code d'invitation",
+      "copyButton": "Copier le code",
+      "copied": "Copié !",
+      "qrTitle": "Ou scannez ce QR code"
+    },
+    "scan": {
+      "title": "Rejoindre un arbre généalogique",
+      "instruction": "Entrez le code d'invitation reçu ou scannez un QR code.",
+      "inputLabel": "Code d'invitation",
+      "inputPlaceholder": "Collez votre code d'invitation ici",
+      "connectButton": "Connecter",
+      "errorInvalid": "Ce code d'invitation ne semble pas valide. Veuillez vérifier et réessayer.",
+      "success": "Connecté ! Vous êtes maintenant lié à {{name}}."
+    }
+  },
+  "contacts": {
+    "title": "Connexions",
+    "noContacts": "Pas encore de connexions. Invitez un membre de la famille pour commencer.",
+    "trusted": "De confiance",
+    "remove": "Supprimer",
+    "relay": "Relais",
+    "since": "Connecté depuis"
+  },
+  "discovery": {
+    "title": "Trouver la famille",
+    "instruction": "Recherchez des parents qui ont opté pour le relais de découverte.",
+    "searchPlaceholder": "Entrez un nom de famille à rechercher",
+    "searchButton": "Rechercher",
+    "noResults": "Aucune correspondance trouvée. Ils n'ont peut-être pas opté pour la découverte.",
+    "connect": "Envoyer une invitation",
+    "optInTitle": "Relais de découverte",
+    "optInDescription": "Permettre aux parents éloignés de vous trouver par nom. Seuls votre fragment de nom et l'adresse du relais sont partagés — aucune donnée généalogique.",
+    "optedIn": "Découvrable",
+    "optedOut": "Privé"
+  },
+  "sync": {
+    "bannerTitle": "{{count}} mise à jour de {{name}}",
+    "bannerTitle_other": "{{count}} mises à jour de {{name}}",
+    "reviewButton": "Examiner",
+    "acceptAll": "Tout accepter",
+    "skipAll": "Tout ignorer",
+    "dismiss": "Ignorer",
+    "accepting": "Accepté",
+    "skipping": "Ignoré",
+    "item": {
+      "fact_claim": "Claim factuel",
+      "endorsement": "Endorsement",
+      "relationship": "Relation",
+      "same_person": "Lien même personne",
+      "retraction": "Rétractation",
+      "other": "Mise à jour"
+    }
+  },
+  "trust": {
+    "revoke": {
+      "title": "Signaler un mauvais acteur",
+      "instruction": "Signalez un utilisateur connecté que vous pensez ne pas être un vrai membre de la famille ou qui se comporte de manière malveillante.",
+      "reasonLabel": "Raison",
+      "reasonPlaceholder": "ex. pas un vrai membre de la famille, publie de fausses informations",
+      "submitButton": "Signaler",
+      "cancel": "Annuler",
+      "effectiveWarning": "Les événements de cette personne seront signalés pour tous les membres connectés une fois votre signalement endorsé."
+    },
+    "badge": {
+      "revoked": "Signalé",
+      "pending": "En cours d'examen"
+    }
+  },
+  "privacy": {
+    "title": "Confidentialité",
+    "tiers": {
+      "public": "Public",
+      "family": "Famille",
+      "private": "Privé"
+    },
+    "tierDescriptions": {
+      "public": "Visible par tous",
+      "family": "Visible par les membres connectés de la famille",
+      "private": "Visible uniquement par des détenteurs de clés spécifiques"
+    },
+    "familyKey": {
+      "title": "Clé familiale",
+      "notHeld": "Vous ne détenez pas la clé familiale",
+      "held": "Clé familiale active",
+      "admit": "Admettre un nouveau membre",
+      "admitting": "Admission en cours…",
+      "admitSuccess": "{{name}} admis dans le groupe familial",
+      "admitError": "Échec de l'admission du membre"
+    }
+  },
+  "recovery": {
+    "title": "Récupération de clé",
+    "supersession": {
+      "title": "Récupérer une clé perdue",
+      "description": "Générez une nouvelle clé d'identité et faites cosigner un événement de supersession par vos contacts de récupération.",
+      "oldKey": "Clé perdue",
+      "newKey": "Nouvelle clé",
+      "attestations": "Attestations",
+      "attestationsRequired": "{{required}} sur {{total}} requis",
+      "submit": "Soumettre la supersession",
+      "submitting": "Envoi en cours…",
+      "success": "Supersession de clé terminée. Votre nouvelle identité est active.",
+      "error": "Échec de la supersession : {{error}}"
+    },
+    "revocation": {
+      "title": "Signaler une clé compromise",
+      "description": "Marquez une clé comme compromise à partir d'un moment donné. Nécessite {{threshold}} attestations de contacts de récupération.",
+      "compromisedKey": "Clé compromise",
+      "fromTimestamp": "Compromise à partir de",
+      "submit": "Révoquer la clé",
+      "submitting": "Révocation en cours…",
+      "success": "Clé révoquée. Les événements après {{timestamp}} seront signalés.",
+      "error": "Révocation échouée : {{error}}",
+      "flagged": "Provenant d'une clé ultérieurement compromise"
+    },
+    "contacts": {
+      "title": "Contacts de récupération",
+      "description": "Choisissez des membres de confiance de la famille qui peuvent cosigner les événements de récupération. Vous avez besoin d'au moins {{min}} contacts.",
+      "add": "Ajouter un contact",
+      "remove": "Supprimer",
+      "none": "Aucun contact de récupération défini"
+    }
+  },
+  "blossom": {
+    "title": "Médias",
+    "upload": "Téléverser un média",
+    "uploading": "Téléversement…",
+    "uploadSuccess": "Média téléversé",
+    "uploadError": "Échec du téléversement : {{error}}",
+    "verifying": "Vérification…",
+    "verified": "Hash vérifié",
+    "hashMismatch": "Discordance de hash — le fichier peut être corrompu",
+    "unavailable": "Média indisponible",
+    "privatePlaceholder": "Média privé — vous ne détenez pas la clé requise",
+    "familyPlaceholder": "Média familial — connectez-vous au groupe familial pour voir",
+    "tier": "Visibilité",
+    "remove": "Supprimer le média",
+    "removeConfirm": "Supprimer ce média de votre serveur Blossom ? Il ne pourra pas être récupéré.",
+    "disputed": "Ce média a été contesté"
+  },
+  "dispute": {
+    "title": "Contester cet enregistrement",
+    "disputing": "Enregistrement contesté",
+    "reasonLabel": "Raison de la contestation",
+    "reasonPlaceholder": "ex. cette date est incorrecte, j'ai des preuves documentaires",
+    "submitButton": "Déposer une contestation",
+    "submitting": "Envoi en cours…",
+    "permanentNote": "Les contestations sont enregistrées de façon permanente et visibles par tous les membres connectés.",
+    "existingDisputes": "{{count}} contestation existante",
+    "existingDisputes_other": "{{count}} contestations existantes",
+    "noReason": "Aucune raison fournie",
+    "badge": "Contesté",
+    "badgeTooltip": "Cet enregistrement a été contesté par un ou plusieurs membres de la famille.",
+    "hideDisputed": "Masquer le contenu contesté par défaut",
+    "showDisputed": "Afficher le contenu contesté"
+  },
+  "conflict": {
+    "title": "Historique des enregistrements",
+    "bestRecord": "Meilleure correspondance",
+    "myRecord": "Mon enregistrement",
+    "endorsed": "Endorsé",
+    "score": "Score",
+    "records": "enregistrements",
+    "hardCount": "contesté(s)",
+    "softCount": "alternative(s)",
+    "noClaims": "Aucun enregistrement pour cette personne.",
+    "viewHistory": "Voir l'historique"
+  },
+  "version": {
+    "newVersionAvailable": "Une version plus récente de Chronicle est disponible avec des fonctionnalités supplémentaires.",
+    "dismiss": "Ignorer"
+  },
+  "about": {
+    "whatTitle": "Qu'est-ce que Chronicle ?",
+    "whatBody": "Chronicle est une application de généalogie axée sur la confidentialité. Elle vous permet de construire et de partager votre arbre généalogique avec des proches, sans qu'aucune entreprise centrale ne détienne vos données. Chaque enregistrement est signé cryptographiquement par la personne qui l'a ajouté, vous savez donc toujours d'où provient l'information.",
+    "howTitle": "Comment ça marche ?",
+    "howBody": "Chronicle stocke votre arbre généalogique sous forme d'une collection de claims signés — un pour chaque fait. Lorsque des membres de la famille se connectent, leurs arbres fusionnent automatiquement. Les faits contradictoires sont affichés côte à côte, avec un score de confiance basé sur le nombre de proches qui soutiennent chaque version.",
+    "identityTitle": "Votre identité",
+    "identityBody": "Votre identité est une paire de clés cryptographiques. Votre phrase de récupération est la seule sauvegarde dont vous avez besoin — aucun mot de passe envoyé à un serveur.",
+    "claimsTitle": "Claims signés",
+    "claimsBody": "Chaque fait sur chaque personne est un enregistrement signé. Les claims ne sont jamais supprimés — seulement rétractés. L'historique complet est toujours préservé.",
+    "decentralTitle": "Pas de serveur central",
+    "decentralBody": "Les données résident sur votre appareil et les appareils des proches connectés. Aucune entreprise ne détient votre histoire familiale.",
+    "protocolTitle": "Construit sur Nostr",
+    "protocolBody": "Chronicle utilise le protocole Nostr pour l'identité cryptographique et la signature d'événements. Cela signifie que votre identité Chronicle fonctionne dans l'écosystème Nostr plus large — si vous souhaitez l'utiliser dans une autre application Nostr, vous le pouvez.",
+    "learnNostr": "En savoir plus sur Nostr",
+    "ecosystemTitle": "Identité inter-écosystèmes",
+    "ecosystemBody": "Votre clé d'identité Chronicle est une paire de clés Nostr standard. Si vous utilisez d'autres applications compatibles Nostr, vous pouvez importer la même clé. Chronicle garde délibérément votre profil social et vos données généalogiques complètement séparés — votre arbre généalogique n'est pas visible sur le réseau Nostr plus large, sauf si vous choisissez de le partager.",
+    "openSourceTitle": "Open source",
+    "openSourceBody": "Chronicle est un logiciel open source, publié sous la licence MIT. Vous êtes libre d'inspecter le code, d'exécuter votre propre relais et de le modifier à votre convenance.",
+    "licence": "Licence MIT",
+    "schemaVersion": "Version du schéma"
+  }
+}

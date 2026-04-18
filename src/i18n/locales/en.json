@@ -1,0 +1,376 @@
+{
+  "app": {
+    "name": "Chronicle",
+    "tagline": "Your family history, preserved forever"
+  },
+  "onboarding": {
+    "createIdentity": {
+      "title": "Create your identity",
+      "nameLabel": "Your name",
+      "namePlaceholder": "Enter your full name",
+      "continueButton": "Continue"
+    },
+    "recoveryPhrase": {
+      "title": "Save your recovery phrase",
+      "instruction": "Write down these words in order and keep them somewhere safe. This is the only way to recover your account if you lose access.",
+      "warningTitle": "Important",
+      "warning": "If you lose your recovery phrase and lose access to this device, your account cannot be recovered.",
+      "confirmButton": "I've saved my recovery phrase",
+      "copyButton": "Copy to clipboard",
+      "copiedConfirm": "Copied!"
+    },
+    "startTree": {
+      "title": "Start your family tree",
+      "instruction": "Add yourself to begin, then start adding ancestors.",
+      "addSelfButton": "Add myself",
+      "skipButton": "I'll do this later"
+    },
+    "importKey": {
+      "title": "Import existing identity",
+      "instruction": "Enter your recovery phrase or private key to restore your account.",
+      "inputLabel": "Recovery phrase or private key",
+      "inputPlaceholder": "Enter your 12-word phrase or nsec1... key",
+      "importButton": "Import",
+      "errorInvalid": "That doesn't look like a valid recovery phrase or private key. Please check and try again."
+    }
+  },
+  "profile": {
+    "addPerson": {
+      "titleSelf": "Add yourself",
+      "titleAncestor": "Add a family member",
+      "nameLabel": "Full name",
+      "namePlaceholder": "e.g. Thomas O'Brien",
+      "bornLabel": "Year of birth",
+      "bornPlaceholder": "e.g. 1930",
+      "birthplaceLabel": "Place of birth",
+      "birthplacePlaceholder": "e.g. Cork, Ireland",
+      "diedLabel": "Year of death",
+      "diedPlaceholder": "Leave blank if living",
+      "evidenceLabel": "Source or evidence",
+      "evidencePlaceholder": "e.g. family bible, birth certificate",
+      "saveButton": "Save",
+      "cancelButton": "Cancel"
+    },
+    "card": {
+      "born": "Born",
+      "died": "Died",
+      "birthplace": "Birthplace",
+      "deathplace": "Place of death",
+      "occupation": "Occupation",
+      "noData": "No information recorded yet",
+      "editButton": "Add information",
+      "retractedBadge": "Withdrawn",
+      "conflictBadge": "Disputed",
+      "evidenceBadge": "Source cited",
+      "name": "Name"
+    },
+    "conflict": {
+      "softTitle": "Alternative record exists",
+      "hardTitle": "Disputed — input needed",
+      "resolvedTitle": "Settled",
+      "viewAllClaims": "View all records",
+      "endorseButton": "Support this record",
+      "retractButton": "Withdraw my record"
+    }
+  },
+  "search": {
+    "placeholder": "Search by name, year, or place",
+    "noResults": "No family members found",
+    "resultsCount_one": "{{count}} result",
+    "resultsCount_other": "{{count}} results"
+  },
+  "export": {
+    "title": "Export your tree",
+    "gedcomButton": "Export as GEDCOM",
+    "archiveButton": "Export Chronicle archive",
+    "gedcomDescription": "Compatible with Ancestry, FamilySearch, and other genealogy apps.",
+    "archiveDescription": "Full backup including all records, claims, and keys. Keep this file safe."
+  },
+  "errors": {
+    "generic": "Something went wrong. Please try again.",
+    "keyGenFailed": "Could not generate your identity. Please try again.",
+    "saveFailed": "Could not save. Please check your storage and try again."
+  },
+  "nav": {
+    "tree": "Family Tree",
+    "search": "Search",
+    "settings": "Settings",
+    "graph": "Family Tree",
+    "about": "About"
+  },
+  "settings": {
+    "title": "Settings",
+    "recoveryContacts": {
+      "title": "Recovery contacts",
+      "description": "Trusted family members who can help you recover your account if needed.",
+      "addButton": "Add recovery contact",
+      "noContacts": "No recovery contacts set. Add trusted family members here."
+    },
+    "language": {
+      "title": "Language",
+      "description": "Choose your preferred language."
+    },
+    "exportSection": "Export & Backup",
+    "broadcast": {
+      "title": "Broadcasting",
+      "localTitle": "Local only (private)",
+      "localDesc": "Events are stored on your device only. Nothing leaves your local relay.",
+      "sharedTitle": "Shared family relay",
+      "sharedDesc": "Publish events to a shared relay so connected family members receive updates automatically.",
+      "discoveryTitle": "Discovery relay (public)",
+      "discoveryDesc": "Also publish minimal discovery events (name fragment + relay address only) to a public relay so distant relatives can find you.",
+      "saveUrl": "Save relay URL",
+      "saved": "Saved",
+      "syncSyncing": "Syncing events from relay…",
+      "syncDone": "Sync complete.",
+      "syncError": "Sync encountered an error."
+    },
+    "relay": {
+      "title": "Relay connections",
+      "noConnections": "No relay connections active. Start your session to connect.",
+      "localLabel": "Local relay",
+      "remoteLabel": "Remote relay"
+    }
+  },
+  "tree": {
+    "nodeCount": "{{count}} people shown",
+    "truncated": "Tree truncated — zoom in to explore branches",
+    "hint": "Drag to pan · Scroll to zoom · Click a node to view profile",
+    "noRoot": "Select a person from the People list to view their family tree.",
+    "viewInGraph": "View in Family Tree",
+    "legend": {
+      "confirmed": "Confirmed",
+      "unconfirmed": "Unconfirmed",
+      "sensitive": "Sensitive",
+      "conflict": "Conflict"
+    }
+  },
+  "relationship": {
+    "parent": "Parent",
+    "child": "Child",
+    "spouse": "Spouse",
+    "sibling": "Sibling",
+    "grandparent": "Grandparent",
+    "grandchild": "Grandchild",
+    "subtype": {
+      "adopted": "Adopted",
+      "non-paternity": "Non-paternity",
+      "unknown-parent": "Unknown parent",
+      "given-up": "Given up for adoption"
+    },
+    "sensitive": "Sensitive relationship"
+  },
+  "match": {
+    "title": "Possible match found",
+    "description": "These two records may be the same person.",
+    "confidence": "Confidence",
+    "reasons": {
+      "same-name": "Same name",
+      "similar-name": "Similar name",
+      "same-birth-year": "Same birth year",
+      "same-birthplace": "Same birthplace",
+      "shared-relative": "Shared relative",
+      "same-death-year": "Same death year"
+    },
+    "confirm": "Yes, same person",
+    "dismiss": "Not the same person"
+  },
+  "invite": {
+    "title": "Connect with family",
+    "generate": {
+      "title": "Invite a family member",
+      "instruction": "Share this code with a family member to connect your trees.",
+      "codeLabel": "Invite code",
+      "copyButton": "Copy code",
+      "copied": "Copied!",
+      "qrTitle": "Or scan this QR code"
+    },
+    "scan": {
+      "title": "Join a family tree",
+      "instruction": "Enter the invite code you received, or scan a QR code.",
+      "inputLabel": "Invite code",
+      "inputPlaceholder": "Paste your invite code here",
+      "connectButton": "Connect",
+      "errorInvalid": "That doesn't look like a valid invite code. Please check and try again.",
+      "success": "Connected! You are now linked with {{name}}."
+    }
+  },
+  "contacts": {
+    "title": "Connections",
+    "noContacts": "No connections yet. Invite a family member to get started.",
+    "trusted": "Trusted",
+    "remove": "Remove",
+    "relay": "Relay",
+    "since": "Connected since"
+  },
+  "discovery": {
+    "title": "Find family",
+    "instruction": "Search for relatives who have opted in to the discovery relay.",
+    "searchPlaceholder": "Enter a surname to search",
+    "searchButton": "Search",
+    "noResults": "No matches found. They may not have opted in to discovery.",
+    "connect": "Send invite",
+    "optInTitle": "Discovery relay",
+    "optInDescription": "Allow distant relatives to find you by name. Only your name fragment and relay address are shared — no ancestry data.",
+    "optedIn": "Discoverable",
+    "optedOut": "Private"
+  },
+  "sync": {
+    "bannerTitle": "{{count}} update_one from {{name}}",
+    "bannerTitle_other": "{{count}} updates from {{name}}",
+    "reviewButton": "Review",
+    "acceptAll": "Accept all",
+    "skipAll": "Skip all",
+    "dismiss": "Dismiss",
+    "accepting": "Accepted",
+    "skipping": "Skipped",
+    "item": {
+      "fact_claim": "Fact claim",
+      "endorsement": "Endorsement",
+      "relationship": "Relationship",
+      "same_person": "Same-person link",
+      "retraction": "Retraction",
+      "other": "Update"
+    }
+  },
+  "trust": {
+    "revoke": {
+      "title": "Report bad actor",
+      "instruction": "Report a connected user who you believe is not a genuine family member or is behaving maliciously.",
+      "reasonLabel": "Reason",
+      "reasonPlaceholder": "e.g. not a real family member, posting false information",
+      "submitButton": "Report",
+      "cancel": "Cancel",
+      "effectiveWarning": "This person's events will be flagged for all connected family members once your report is endorsed."
+    },
+    "badge": {
+      "revoked": "Reported",
+      "pending": "Under review"
+    }
+  },
+  "privacy": {
+    "title": "Privacy",
+    "tiers": {
+      "public": "Public",
+      "family": "Family",
+      "private": "Private"
+    },
+    "tierDescriptions": {
+      "public": "Visible to anyone",
+      "family": "Visible to connected family members",
+      "private": "Visible only to specific keyholders"
+    },
+    "familyKey": {
+      "title": "Family Key",
+      "notHeld": "You do not hold the family key",
+      "held": "Family key active",
+      "admit": "Admit new member",
+      "admitting": "Admitting...",
+      "admitSuccess": "{{name}} admitted to family group",
+      "admitError": "Failed to admit member"
+    }
+  },
+  "recovery": {
+    "title": "Key Recovery",
+    "supersession": {
+      "title": "Recover Lost Key",
+      "description": "Generate a new identity key and have recovery contacts co-sign a supersession event.",
+      "oldKey": "Lost key",
+      "newKey": "New key",
+      "attestations": "Attestations",
+      "attestationsRequired": "{{required}} of {{total}} required",
+      "submit": "Submit supersession",
+      "submitting": "Submitting...",
+      "success": "Key supersession complete. Your new identity is active.",
+      "error": "Supersession failed: {{error}}"
+    },
+    "revocation": {
+      "title": "Report Compromised Key",
+      "description": "Mark a key as compromised from a specific point in time. Requires {{threshold}} recovery contact attestations.",
+      "compromisedKey": "Compromised key",
+      "fromTimestamp": "Compromised from",
+      "submit": "Revoke key",
+      "submitting": "Revoking...",
+      "success": "Key revoked. Events after {{timestamp}} will be flagged.",
+      "error": "Revocation failed: {{error}}",
+      "flagged": "From a later-compromised key"
+    },
+    "contacts": {
+      "title": "Recovery Contacts",
+      "description": "Choose trusted family members who can co-sign recovery events. You need at least {{min}} contacts.",
+      "add": "Add contact",
+      "remove": "Remove",
+      "none": "No recovery contacts set"
+    }
+  },
+  "blossom": {
+    "title": "Media",
+    "upload": "Upload media",
+    "uploading": "Uploading...",
+    "uploadSuccess": "Media uploaded",
+    "uploadError": "Upload failed: {{error}}",
+    "verifying": "Verifying...",
+    "verified": "Hash verified",
+    "hashMismatch": "Hash mismatch — file may be corrupt",
+    "unavailable": "Media unavailable",
+    "privatePlaceholder": "Private media — you do not hold the required key",
+    "familyPlaceholder": "Family media — connect to the family group to view",
+    "tier": "Visibility",
+    "remove": "Remove media",
+    "removeConfirm": "Remove this media from your Blossom server? It cannot be recovered.",
+    "disputed": "This media has been disputed"
+  },
+  "dispute": {
+    "title": "Dispute this record",
+    "disputing": "Record being disputed",
+    "reasonLabel": "Reason for dispute",
+    "reasonPlaceholder": "e.g. this date is incorrect, I have documentary evidence",
+    "submitButton": "Raise dispute",
+    "submitting": "Submitting…",
+    "permanentNote": "Disputes are permanently recorded and visible to all connected family members.",
+    "existingDisputes": "{{count}} existing dispute",
+    "existingDisputes_other": "{{count}} existing disputes",
+    "noReason": "No reason given",
+    "badge": "Disputed",
+    "badgeTooltip": "This record has been disputed by one or more family members.",
+    "hideDisputed": "Hide disputed content by default",
+    "showDisputed": "Show disputed content"
+  },
+  "conflict": {
+    "title": "Record History",
+    "bestRecord": "Best match",
+    "myRecord": "My record",
+    "endorsed": "Endorsed",
+    "score": "Score",
+    "records": "records",
+    "hardCount": "disputed",
+    "softCount": "alternatives",
+    "noClaims": "No records yet for this person.",
+    "viewHistory": "View history"
+  },
+  "version": {
+    "newVersionAvailable": "A newer version of Chronicle is available with additional features.",
+    "dismiss": "Dismiss"
+  },
+  "about": {
+    "whatTitle": "What is Chronicle?",
+    "whatBody": "Chronicle is a privacy-first family history app. It lets you build and share your family tree with relatives, with no central company holding your data. Every record is cryptographically signed by the person who added it, so you always know where information came from.",
+    "howTitle": "How does it work?",
+    "howBody": "Chronicle stores your family tree as a collection of signed claims — one for each fact. When family members connect, their trees merge automatically. Conflicting facts are shown side by side, with a confidence score based on how many relatives support each version.",
+    "identityTitle": "Your identity",
+    "identityBody": "Your identity is a cryptographic keypair. Your recovery phrase is the only backup you need — no passwords sent to any server.",
+    "claimsTitle": "Signed claims",
+    "claimsBody": "Every fact about every person is a signed record. Claims are never deleted — only retracted. The full history is always preserved.",
+    "decentralTitle": "No central server",
+    "decentralBody": "Data lives on your device and the devices of connected relatives. No company holds your family history.",
+    "protocolTitle": "Built on Nostr",
+    "protocolBody": "Chronicle uses the Nostr protocol for cryptographic identity and event signing. This means your Chronicle identity works across the broader Nostr ecosystem — if you ever want to use it in another Nostr application, you can.",
+    "learnNostr": "Learn about Nostr",
+    "ecosystemTitle": "Cross-ecosystem identity",
+    "ecosystemBody": "Your Chronicle identity key is a standard Nostr keypair. If you use other Nostr-compatible apps, you can import the same key. Chronicle deliberately keeps your social profile and your genealogy data completely separate — your family tree is not visible on the wider Nostr network unless you choose to share it.",
+    "openSourceTitle": "Open source",
+    "openSourceBody": "Chronicle is open source software, released under the MIT licence. You are free to inspect the code, run your own relay, and modify it as you see fit.",
+    "licence": "MIT Licence",
+    "schemaVersion": "Schema version"
+  }
+}

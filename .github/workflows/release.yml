@@ -1,0 +1,228 @@
+# Chronicle — Release Workflow
+#
+# Triggered when you push a version tag (e.g. v1.0.0).
+# Builds installers on real Mac, Windows, and Linux machines in parallel,
+# then attaches them all to a GitHub Release automatically.
+#
+# HOW TO TRIGGER A RELEASE:
+#   git tag v1.0.0
+#   git push origin v1.0.0
+#
+# That's it. GitHub does the rest. The release appears at:
+#   https://github.com/YOUR_USERNAME/chronicle/releases
+#
+# REQUIRED SECRETS (set in GitHub → Settings → Secrets → Actions):
+#   None required for basic unsigned builds.
+#   For code-signed builds (removes OS security warnings), see the
+#   "Code signing" section at the bottom of this file.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'   # Matches v1.0.0, v1.2.3, v2.0.0-beta.1, etc.
+
+# Allow the workflow to create releases and upload files
+permissions:
+  contents: write
+
+jobs:
+
+  # ── macOS build ─────────────────────────────────────────────────────────────
+  build-mac:
+    name: Build — macOS
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore better-sqlite3 mock
+        # npm ci wipes node_modules — restore the pure-JS mock so tests pass
+        run: |
+          cp src/__mocks__/better-sqlite3.js node_modules/better-sqlite3/index.js
+          echo '{"name":"better-sqlite3","version":"9.0.0","main":"index.js"}' > node_modules/better-sqlite3/package.json
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build Vite app
+        run: npm run build
+
+      - name: Build Electron installer (macOS)
+        run: npx electron-builder --mac --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Code signing (optional — see bottom of file):
+          # CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          # CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-installers
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+
+  # ── Windows build ────────────────────────────────────────────────────────────
+  build-windows:
+    name: Build — Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore better-sqlite3 mock
+        shell: bash
+        run: |
+          cp src/__mocks__/better-sqlite3.js node_modules/better-sqlite3/index.js
+          echo '{"name":"better-sqlite3","version":"9.0.0","main":"index.js"}' > node_modules/better-sqlite3/package.json
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build Vite app
+        run: npm run build
+
+      - name: Build Electron installer (Windows)
+        run: npx electron-builder --win --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Code signing (optional — see bottom of file):
+          # WIN_CSC_LINK: ${{ secrets.WIN_CERT_P12_BASE64 }}
+          # WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            dist/*.exe
+          if-no-files-found: error
+
+  # ── Linux build ──────────────────────────────────────────────────────────────
+  build-linux:
+    name: Build — Linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore better-sqlite3 mock
+        run: |
+          cp src/__mocks__/better-sqlite3.js node_modules/better-sqlite3/index.js
+          echo '{"name":"better-sqlite3","version":"9.0.0","main":"index.js"}' > node_modules/better-sqlite3/package.json
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build Vite app
+        run: npm run build
+
+      - name: Build Electron installer (Linux)
+        run: npx electron-builder --linux --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-installers
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+          if-no-files-found: error
+
+  # ── Create GitHub Release ────────────────────────────────────────────────────
+  release:
+    name: Publish Release
+    needs: [build-mac, build-windows, build-linux]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: installers/
+          merge-multiple: true
+
+      - name: List installer files
+        run: ls -lh installers/
+
+      - name: Create GitHub Release and upload installers
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Chronicle ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}  # e.g. v1.0.0-beta.1 → pre-release
+          generate_release_notes: true   # Auto-generates changelog from commit messages
+          files: installers/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+# ── CODE SIGNING NOTES ────────────────────────────────────────────────────────
+#
+# Without code signing, users will see OS security warnings on first launch:
+#   - macOS: "Chronicle can't be opened because it's from an unidentified developer"
+#             Right-click → Open → Open (works fine, just an extra step)
+#   - Windows: SmartScreen blue warning → "More info" → "Run anyway"
+#
+# These warnings disappear once you add code signing. To do so:
+#
+# macOS:
+#   1. Join Apple Developer Program ($99/year) at developer.apple.com
+#   2. Export your Developer ID certificate as a .p12 file
+#   3. Base64-encode it: base64 -i certificate.p12 | pbcopy
+#   4. Add to GitHub Secrets:
+#        MAC_CERT_P12_BASE64  — the base64 string
+#        MAC_CERT_PASSWORD    — the certificate password
+#        APPLE_ID             — your Apple ID email
+#        APPLE_APP_SPECIFIC_PASSWORD — generated at appleid.apple.com
+#        APPLE_TEAM_ID        — your 10-character team ID
+#   5. Uncomment the CSC_* and APPLE_* lines in the macOS build step above
+#
+# Windows:
+#   1. Purchase a code signing certificate from DigiCert, Sectigo, etc.
+#   2. Export as .p12, base64-encode it
+#   3. Add to GitHub Secrets:
+#        WIN_CERT_P12_BASE64
+#        WIN_CERT_PASSWORD
+#   4. Uncomment the WIN_CSC_* lines in the Windows build step above
+#
+# You can distribute without signing initially — family members can get past
+# the warnings. Add signing before any wider public release.
