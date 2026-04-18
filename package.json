@@ -3,7 +3,10 @@
   "private": true,
   "version": "1.0.0",
   "description": "A decentralised, privacy-first family history app",
-  "author": "MattsTryingAgain",
+  "author": {
+  "name": "MattsTryingAgain",
+  "email": "your@email.com"
+},
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
