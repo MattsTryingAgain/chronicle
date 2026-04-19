@@ -103,5 +103,8 @@
     "electron": "^34.0.0"
   },
   "description": "Decentralised family history \u2014 privacy-first, cryptographically verifiable",
-  "author": "MattsTryingAgain"
+  "author": {
+    "name": "MattsTryingAgain",
+    "email": "chronicle@example.com"
+  }
 }
