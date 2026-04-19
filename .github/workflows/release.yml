@@ -42,13 +42,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --ignore-scripts
 
       - name: Restore better-sqlite3 mock
-        # npm ci wipes node_modules — restore the pure-JS mock so tests pass
+        # npm install does not create better-sqlite3 dir — create and restore mock
         run: |
           mkdir -p node_modules/better-sqlite3
           cp src/__mocks__/better-sqlite3.js node_modules/better-sqlite3/index.js
@@ -93,10 +92,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --ignore-scripts
 
       - name: Restore better-sqlite3 mock
         shell: bash
@@ -140,10 +138,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --ignore-scripts
 
       - name: Restore better-sqlite3 mock
         run: |
