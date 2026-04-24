@@ -241,7 +241,7 @@ function StartTreeScreen() {
 
 function ImportScreen({ onBack }: { onBack: () => void }) {
   const { t } = useTranslation()
-  const { importIdentity, setScreen } = useApp()
+  const { importIdentity } = useApp()
   const [input, setInput] = useState('')
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
@@ -253,13 +253,13 @@ function ImportScreen({ onBack }: { onBack: () => void }) {
     setLoading(true)
     try {
       await importIdentity(input.trim(), name.trim(), password)
-      setScreen('main')
+      // navigation handled inside importIdentity via beginSession → setScreen('main')
     } catch {
       setError(t('onboarding.importKey.errorInvalid'))
     } finally {
       setLoading(false)
     }
-  }, [input, name, password, importIdentity, setScreen, t])
+  }, [input, name, password, importIdentity, t])
 
   return (
     <div className="onboarding-wrap">

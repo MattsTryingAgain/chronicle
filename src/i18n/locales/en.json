@@ -49,7 +49,9 @@
       "evidenceLabel": "Source or evidence",
       "evidencePlaceholder": "e.g. family bible, birth certificate",
       "saveButton": "Save",
-      "cancelButton": "Cancel"
+      "cancelButton": "Cancel",
+      "occupationLabel": "Occupation",
+      "occupationPlaceholder": "e.g. farmer, teacher, merchant"
     },
     "card": {
       "born": "Born",

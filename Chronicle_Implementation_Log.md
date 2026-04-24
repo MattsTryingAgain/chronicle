@@ -20,6 +20,29 @@ This document records what has been built, decisions made during implementation,
 
 ---
 
+## Bug Fixes Applied (Post-Stage 7)
+
+### Fix 1 — nsec import generating stale mnemonic / not starting relay
+**Root cause:** `importIdentity` in `AppContext.tsx` called `setSession` directly instead of `beginSession`, bypassing relay startup and contact-list restore. Additionally, if the user had partially started the "Create identity" flow (which sets `generatedMnemonic`), then switched to import, the stale mnemonic was never cleared.
+
+**Files changed:**
+- `src/context/AppContext.tsx`: `importIdentity` now calls `setGeneratedMnemonic(null)` then `beginSession(...)` (handles `setScreen('main')`, relay start, contact-list restore). Dependency array updated to include `beginSession`.
+- `src/components/Onboarding.tsx`: `ImportScreen` no longer calls `setScreen('main')` (now handled inside `importIdentity`). Removed now-unused `setScreen` from destructure.
+
+### Fix 2 — No relationship links shown in family tree
+**Root cause:** `AddPersonModal` never created `RelationshipClaim` events. The tree view calls `traverseGraph()` which reads from the graph store — but with no edges, it only showed the root node.
+
+**Files changed:**
+- `src/components/AddPersonModal.tsx`: Added relationship section UI (relationship-type dropdown + person picker). On save, creates both the forward and inverse `RelationshipClaim` in the graph store via `addRelationship()`, and publishes signed kind-30079 events (or stores unsigned local claims if no session). The `inverseRelationship()` helper maps parent↔child, grandparent↔grandchild, spouse↔spouse, sibling↔sibling.
+- `src/i18n/locales/en.json` + `fr.json`: Added `occupationLabel` / `occupationPlaceholder` keys (previously the modal incorrectly reused `evidenceLabel` for the occupation field).
+
+### Auto-update status
+Already correctly wired in `electron/main.cjs`. `setupAutoUpdater(win)` is called in `app.whenReady()`. Requires a published GitHub Release with `latest.yml` in assets — won't fire in dev mode. No changes needed.
+
+**Test count: 616/616 passing. TypeScript: clean. Build: clean.**
+
+---
+
 ## Known Gotchas — Read Before Writing Any Import Statements
 
 ### 1. `.js` extension required for subpath imports under Vite/ESM

@@ -411,12 +411,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         createdAt: Math.floor(Date.now() / 1000),
       })
       void allowlistAdd(km.npub)
-      setSession({ npub: km.npub, nsec: km.nsec, displayName })
+      setGeneratedMnemonic(null)   // clear any stale mnemonic from a prior create-identity attempt
       setHasStoredIdentity(true)
       persistStore()
+      beginSession(km.npub, km.nsec, displayName)
       return km
     },
-    [persistStore, allowlistAdd],
+    [persistStore, allowlistAdd, beginSession],
   )
 
   // ── signOut ────────────────────────────────────────────────────────────────
