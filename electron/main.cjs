@@ -214,6 +214,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      partition: 'persist:chronicle',
     },
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
   })
