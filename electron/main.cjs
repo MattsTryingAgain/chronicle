@@ -23,6 +23,23 @@ const RELAY_PORT = 4869
 const RELAY_HOST = '127.0.0.1'
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
+// ─── Single instance lock ─────────────────────────────────────────────────────
+// Prevent multiple copies of the app opening at the same time.
+// If a second instance is launched, focus the existing window instead.
+
+const gotLock = app.requestSingleInstanceLock()
+
+if (!gotLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (global.mainWindow) {
+      if (global.mainWindow.isMinimized()) global.mainWindow.restore()
+      global.mainWindow.focus()
+    }
+  })
+}
+
 // ─── Auto-updater (production only) ──────────────────────────────────────────
 // electron-updater must be installed: npm install electron-updater
 // Configured via package.json build.publish field.
@@ -218,6 +235,8 @@ function createWindow() {
     },
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
   })
+
+  global.mainWindow = mainWindow
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
