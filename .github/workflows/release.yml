@@ -5,11 +5,12 @@ on:
     tags:
       - 'v*.*.*'
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -21,40 +22,33 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Restore better-sqlite3 mock
+        shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path node_modules/better-sqlite3
           Copy-Item src/__mocks__/better-sqlite3.js node_modules/better-sqlite3/index.js
           '{"name":"better-sqlite3","version":"9.0.0","main":"index.js"}' | Out-File -Encoding utf8 node_modules/better-sqlite3/package.json
-        shell: pwsh
 
       - name: Sync version from tag
-        run: |
-          $tag = "${{ github.ref_name }}" -replace '^v', ''
-          $pkg = Get-Content package.json | ConvertFrom-Json
-          $pkg.version = $tag
-          $pkg | ConvertTo-Json -Depth 10 | Set-Content package.json
         shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          $pkg = Get-Content package.json | ConvertFrom-Json
+          $pkg.version = $version
+          $pkg | ConvertTo-Json -Depth 10 | Set-Content package.json
 
       - name: Run tests
         run: npm test
 
       - name: Build
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run build:electron
+        run: node_modules/.bin/vite build && npx electron-builder --win --publish never
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: windows-build
-          path: |
-            dist-electron/*.exe
-            dist-electron/*.yml
+          path: dist/
 
   build-mac:
     runs-on: macos-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -73,31 +67,23 @@ jobs:
 
       - name: Sync version from tag
         run: |
-          TAG="${{ github.ref_name }}"
-          VERSION="${TAG#v}"
-          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json')); p.version='$VERSION'; fs.writeFileSync('package.json', JSON.stringify(p, null, 2))"
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json'));p.version='$VERSION';fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
 
       - name: Run tests
         run: npm test
 
       - name: Build
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run build:electron
+        run: node_modules/.bin/vite build && npx electron-builder --mac --publish never
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: mac-build
-          path: |
-            dist-electron/*.dmg
-            dist-electron/*.zip
-            dist-electron/*.yml
+          path: dist/
 
   build-linux:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -116,43 +102,32 @@ jobs:
 
       - name: Sync version from tag
         run: |
-          TAG="${{ github.ref_name }}"
-          VERSION="${TAG#v}"
-          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json')); p.version='$VERSION'; fs.writeFileSync('package.json', JSON.stringify(p, null, 2))"
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json'));p.version='$VERSION';fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
 
       - name: Run tests
         run: npm test
 
       - name: Build
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run build:electron
+        run: node_modules/.bin/vite build && npx electron-builder --linux --publish never
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: linux-build
-          path: |
-            dist-electron/*.AppImage
-            dist-electron/*.deb
-            dist-electron/*.yml
+          path: dist/
 
   release:
     needs: [build-windows, build-mac, build-linux]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/download-artifact@v4
         with:
-          files: |
-            windows-build/*
-            mac-build/*
-            linux-build/*
+          path: artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
           prerelease: ${{ contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

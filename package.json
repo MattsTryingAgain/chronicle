@@ -8,7 +8,7 @@
     "dev": "vite",
     "dev:electron": "concurrently -k \"cross-env NODE_ENV=development vite\" \"cross-env NODE_ENV=development electron .\"",
     "build": "tsc -b && vite build",
-    "build:electron": "npm run build && electron-builder",
+    "build:electron": "npm run build && electron-builder --publish never",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run"

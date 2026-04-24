@@ -254,7 +254,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     try {
-      const saved = sessionStorage.getItem('chronicle:store')
+      const saved = localStorage.getItem('chronicle:store')
       if (saved) {
         const restored = MemoryStore.deserialise(saved)
         const identity = restored.getIdentity()
@@ -272,7 +272,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const persistStore = useCallback(() => {
     try {
-      sessionStorage.setItem('chronicle:store', store.serialise())
+      localStorage.setItem('chronicle:store', store.serialise())
     } catch { /* silent */ }
   }, [])
 
@@ -329,7 +329,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       startRelay()
       // Load contact list if stored
       try {
-        const saved = sessionStorage.getItem('chronicle:contacts')
+        const saved = localStorage.getItem('chronicle:contacts')
         if (saved) {
           const nsecHex = nsecToHex(nsec)
           const mgr = ContactListManager.fromEncrypted(saved, nsecHex)
@@ -461,8 +461,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const initFamilyKey = useCallback(() => {
     const key = generateFamilyKey()
     setFamilyKey(key)
-    // Persist encoded key in sessionStorage (encrypted at rest via storage layer in full impl)
-    sessionStorage.setItem('chronicle_family_key', encodeFamilyKey(key))
+    // Persist encoded key in localStorage (encrypted at rest via storage layer in full impl)
+    localStorage.setItem('chronicle_family_key', encodeFamilyKey(key))
   }, [])
 
   const admitFamilyMember = useCallback(async (
