@@ -1,35 +1,23 @@
-# Chronicle — Continuous Integration
-#
-# Runs on every push to main and on every pull request.
-# Catches broken tests or TypeScript errors before they reach a release.
-# Fast — Linux only, no Electron build.
-
 name: CI
 
 on:
   push:
     branches: [main]
-    tags-ignore:
-      - 'v*'          # Release tags are handled by release.yml, not this
   pull_request:
     branches: [main]
 
 jobs:
   test:
-    name: Test & Type-check
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: 20
 
       - name: Install dependencies
-        run: npm install --ignore-scripts
+        run: npm ci --ignore-scripts
 
       - name: Restore better-sqlite3 mock
         run: |
@@ -37,11 +25,11 @@ jobs:
           cp src/__mocks__/better-sqlite3.js node_modules/better-sqlite3/index.js
           echo '{"name":"better-sqlite3","version":"9.0.0","main":"index.js"}' > node_modules/better-sqlite3/package.json
 
-      - name: Type-check
+      - name: TypeScript check
         run: node_modules/.bin/tsc -p tsconfig.app.json --noEmit
 
       - name: Run tests
         run: npm test
 
-      - name: Build (verify no compile errors)
-        run: npm run build
+      - name: Build
+        run: node_modules/.bin/vite build
