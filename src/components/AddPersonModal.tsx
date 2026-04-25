@@ -12,7 +12,8 @@
 import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { store } from '../lib/storage'
-import { serialiseGraph } from '../lib/graph'
+import { serialiseGraph, getRelationshipsFor } from '../lib/graph'
+import { storageSet } from '../lib/appStorage'
 import { useApp } from '../context/AppContext'
 import { buildFactClaim, buildRelationshipClaim } from '../lib/eventBuilder'
 import { addRelationship } from '../lib/graph'
@@ -76,6 +77,11 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
     ? store.getClaimsForPerson(editPerson.pubkey)
     : []
 
+  // Existing relationships shown in edit mode (for reference)
+  const existingRelationships = isEdit && editPerson
+    ? getRelationshipsFor(editPerson.pubkey)
+    : []
+
   const initialFieldValues = (): Partial<Record<FactField, string>> => {
     if (!isEdit) return {}
     const vals: Partial<Record<FactField, string>> = {}
@@ -98,10 +104,8 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
   const allPersons = store.getAllPersons()
 
   const persistNow = useCallback(() => {
-    try {
-      localStorage.setItem('chronicle:store', store.serialise())
-      localStorage.setItem('chronicle:graph', JSON.stringify(serialiseGraph()))
-    } catch { /* silent */ }
+    void storageSet('chronicle:store', store.serialise())
+    void storageSet('chronicle:graph', JSON.stringify(serialiseGraph()))
   }, [])
 
   const handleSave = useCallback(async () => {
@@ -192,8 +196,8 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
       // unsigned path and edit mode need this guarantee.
       persistNow()
 
-      // Relationship linking — add modes only
-      if (!isEdit && relatedToPubkey && session?.nsec) {
+      // Relationship linking — works in both add and edit modes
+      if (relatedToPubkey && session?.nsec) {
         const relEvent = buildRelationshipClaim({
           claimantNpub: claimantPubkey,
           claimantNsec: session.nsec,
@@ -234,7 +238,7 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
         }
         addRelationship(invRel)
         publishEvent(invEvent)
-      } else if (!isEdit && relatedToPubkey) {
+      } else if (relatedToPubkey) {
         const rel: RelationshipClaim = {
           eventId: `local-rel-${person.pubkey}-${relatedToPubkey}-${now}`,
           claimantPubkey,
@@ -330,10 +334,41 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
             />
           </div>
 
-          {/* Relationship linking — add mode only */}
-          {!isEdit && allPersons.length > 0 && (
+          {/* Existing relationships (edit mode) */}
+          {isEdit && existingRelationships.length > 0 && (
             <div className="form-group">
-              <label htmlFor="ap-related">{t('profile.addPerson.relatedToLabel', { defaultValue: 'Related to' })}</label>
+              <label>Current relationships</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {existingRelationships.map(rel => {
+                  const other = store.getPerson(
+                    rel.subjectPubkey === editPerson?.pubkey ? rel.relatedPubkey : rel.subjectPubkey
+                  )
+                  return (
+                    <div key={rel.eventId} style={{
+                      padding: '6px 10px',
+                      background: 'var(--surface-raised)',
+                      borderRadius: 6,
+                      fontSize: 13,
+                      color: 'var(--ink)',
+                      display: 'flex',
+                      gap: 8,
+                    }}>
+                      <span style={{ color: 'var(--ink-muted)', textTransform: 'capitalize' }}>{rel.relationship}</span>
+                      <span>of</span>
+                      <span style={{ fontWeight: 500 }}>{other?.displayName ?? rel.relatedPubkey.slice(0, 12) + '…'}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Add a relationship — available in both add and edit modes */}
+          {allPersons.filter(p => p.pubkey !== editPerson?.pubkey).length > 0 && (
+            <div className="form-group">
+              <label htmlFor="ap-related">
+                {isEdit ? 'Add a relationship' : t('profile.addPerson.relatedToLabel', { defaultValue: 'Related to' })}
+              </label>
               <select
                 id="ap-related"
                 className="form-select"
@@ -341,9 +376,11 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
                 onChange={e => setRelatedToPubkey(e.target.value)}
               >
                 <option value="">{t('profile.addPerson.noRelation', { defaultValue: 'No relationship' })}</option>
-                {allPersons.map(p => (
-                  <option key={p.pubkey} value={p.pubkey}>{p.displayName}</option>
-                ))}
+                {allPersons
+                  .filter(p => p.pubkey !== editPerson?.pubkey)
+                  .map(p => (
+                    <option key={p.pubkey} value={p.pubkey}>{p.displayName}</option>
+                  ))}
               </select>
               {relatedToPubkey && (
                 <select

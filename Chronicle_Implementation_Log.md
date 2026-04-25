@@ -676,12 +676,18 @@ Comparable to Stage 4 in complexity. The platform abstraction layer is the most 
 - Google Play developer account created (for Android distribution)
 - Stage 7 complete ✅
 
-### Fix 4: Relationship graph not persisted across sessions
+### Fix 5: Persistence not surviving app shutdown + relationship editing in edit mode
 
-**Root cause:** `serialiseGraph()` and `deserialiseGraph()` already existed in `graph.ts` but were never wired into `AppContext`. The graph store is a separate module-level singleton from `MemoryStore`, so it was never included in the `chronicle:store` localStorage key.
+**Root cause (persistence):** `localStorage` is unreliable in Electron when the app is built and loaded as a `file://` URL — writes can fail silently due to the null origin + sandbox combination. Also `localStorage` is scoped per session in some configurations, so app shutdown loses it.
 
-**Fix:**
-- `AppContext` imports `serialiseGraph` / `deserialiseGraph` from `graph.ts`
-- `persistStore` now writes `chronicle:graph` to localStorage alongside `chronicle:store`
-- The restore-on-mount effect reads `chronicle:graph` and calls `deserialiseGraph()` after restoring the main store
-- `AddPersonModal`'s `persistNow()` also writes `chronicle:graph` (covers the relationship claims added in the same save operation)
+**Fix — proper Electron file storage:**
+- `electron/main.cjs` — added `store-get` / `store-set` IPC handlers that read/write JSON files directly to `app.getPath('userData')` (survives restarts unconditionally)
+- `electron/preload.cjs` — exposed `storeGet` / `storeSet` via context bridge
+- `src/lib/appStorage.ts` (new) — thin async abstraction: uses Electron IPC when `window.chronicleElectron` is present, falls back to `localStorage` in browser/dev mode
+- `src/context/AppContext.tsx` — all `localStorage` calls replaced with `storageGet` / `storageSet`; restore-on-mount is now async
+- `src/components/AddPersonModal.tsx` — `persistNow` uses `storageSet`
+
+**Fix — relationship editing:**
+- Edit modal now shows existing relationships for the person
+- Both add and edit modes show the "add a relationship" UI
+- Relationship save logic no longer gated to add-only; works in edit mode too

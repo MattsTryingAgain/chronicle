@@ -34,6 +34,7 @@ import { RelayTable } from '../lib/relayGossip'
 import { JoinRequestQueue, type JoinRequest } from '../lib/joinRequest'
 import { generateFamilyKey, encodeFamilyKey, admitMember } from '../lib/privacyTier'
 import { serialiseGraph, deserialiseGraph } from '../lib/graph'
+import { storageGet, storageSet } from '../lib/appStorage'
 import { keyRecoveryStore } from '../lib/keyRecovery'
 import { mediaCache, type MediaCacheEntry } from '../lib/blossom'
 import type { KeyMaterial, ChronicleEvent } from '../types/chronicle'
@@ -254,35 +255,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ── Store restore on mount ─────────────────────────────────────────────────
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('chronicle:store')
-      if (saved) {
-        const restored = MemoryStore.deserialise(saved)
-        const identity = restored.getIdentity()
-        if (identity) {
-          store.setIdentity(identity)
-          for (const p of restored.getAllPersons()) store.upsertPerson(p)
-          for (const c of restored.getAllClaims()) store.addClaim(c)
-          for (const e of restored.getAllEndorsements()) store.addEndorsement(e)
-          for (const ev of restored.getAllRawEvents()) store.addRawEvent(ev)
-          setHasStoredIdentity(true)
-          setScreen('onboarding-unlock')
+    const restore = async () => {
+      try {
+        const saved = await storageGet('chronicle:store')
+        if (saved) {
+          const restored = MemoryStore.deserialise(saved)
+          const identity = restored.getIdentity()
+          if (identity) {
+            store.setIdentity(identity)
+            for (const p of restored.getAllPersons()) store.upsertPerson(p)
+            for (const c of restored.getAllClaims()) store.addClaim(c)
+            for (const e of restored.getAllEndorsements()) store.addEndorsement(e)
+            for (const ev of restored.getAllRawEvents()) store.addRawEvent(ev)
+            setHasStoredIdentity(true)
+            setScreen('onboarding-unlock')
+          }
         }
+        const savedGraph = await storageGet('chronicle:graph')
+        if (savedGraph) {
+          deserialiseGraph(JSON.parse(savedGraph))
+        }
+      } catch {
+        // Fresh start
       }
-      const savedGraph = localStorage.getItem('chronicle:graph')
-      if (savedGraph) {
-        deserialiseGraph(JSON.parse(savedGraph))
-      }
-    } catch {
-      // Fresh start
     }
+    void restore()
   }, [])
 
   const persistStore = useCallback(() => {
-    try {
-      localStorage.setItem('chronicle:store', store.serialise())
-      localStorage.setItem('chronicle:graph', JSON.stringify(serialiseGraph()))
-    } catch { /* silent */ }
+    const data = store.serialise()
+    const graph = JSON.stringify(serialiseGraph())
+    void storageSet('chronicle:store', data)
+    void storageSet('chronicle:graph', graph)
   }, [])
 
   // ── Relay lifecycle ────────────────────────────────────────────────────────
@@ -337,17 +341,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setScreen('main')
       startRelay()
       // Load contact list if stored
-      try {
-        const saved = localStorage.getItem('chronicle:contacts')
-        if (saved) {
-          const nsecHex = nsecToHex(nsec)
-          const mgr = ContactListManager.fromEncrypted(saved, nsecHex)
-          if (mgr) {
-            contactMgrRef.current = mgr
-            setContacts([...mgr.getAll()])
+      void storageGet('chronicle:contacts').then(saved => {
+        try {
+          if (saved) {
+            const nsecHex = nsecToHex(nsec)
+            const mgr = ContactListManager.fromEncrypted(saved, nsecHex)
+            if (mgr) {
+              contactMgrRef.current = mgr
+              setContacts([...mgr.getAll()])
+            }
           }
-        }
-      } catch { /* non-fatal */ }
+        } catch { /* non-fatal */ }
+      })
     },
     [startRelay],
   )
@@ -470,8 +475,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const initFamilyKey = useCallback(() => {
     const key = generateFamilyKey()
     setFamilyKey(key)
-    // Persist encoded key in localStorage (encrypted at rest via storage layer in full impl)
-    localStorage.setItem('chronicle_family_key', encodeFamilyKey(key))
+    // Persist encoded key (encrypted at rest via storage layer in full impl)
+    void storageSet('chronicle_family_key', encodeFamilyKey(key))
   }, [])
 
   const admitFamilyMember = useCallback(async (

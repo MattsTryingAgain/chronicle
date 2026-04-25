@@ -139,6 +139,33 @@ ipcMain.on('install-update', () => {
   }
 })
 
+// ─── Persistent key-value store (replaces localStorage for reliability) ───────
+// Writes JSON files to userData so data survives app restarts and file:// quirks.
+
+const storeDir = app.getPath('userData')
+
+ipcMain.handle('store-get', (_event, key) => {
+  try {
+    const filePath = path.join(storeDir, `${key}.json`)
+    if (!fs.existsSync(filePath)) return null
+    return fs.readFileSync(filePath, 'utf8')
+  } catch (e) {
+    console.error('[store-get]', key, e.message)
+    return null
+  }
+})
+
+ipcMain.handle('store-set', (_event, key, value) => {
+  try {
+    const filePath = path.join(storeDir, `${key}.json`)
+    fs.writeFileSync(filePath, value, 'utf8')
+    return true
+  } catch (e) {
+    console.error('[store-set]', key, e.message)
+    return false
+  }
+})
+
 // ─── SQLite store (Stage 7) ───────────────────────────────────────────────────
 // SqliteStore requires native better-sqlite3; only loaded inside Electron.
 // The graph backend and media cache backend are injected here so all

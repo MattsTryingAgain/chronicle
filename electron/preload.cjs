@@ -22,4 +22,8 @@ contextBridge.exposeInMainWorld('chronicleElectron', {
 
   /** Open a URL in the system browser */
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
+
+  /** Persistent key-value store backed by userData files (survives app restarts) */
+  storeGet: (key) => ipcRenderer.invoke('store-get', key),
+  storeSet: (key, value) => ipcRenderer.invoke('store-set', key, value),
 })
