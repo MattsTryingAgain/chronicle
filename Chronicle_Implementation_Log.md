@@ -8,11 +8,11 @@ This document records what has been built, decisions made during implementation,
 
 ### Applying a new tarball from Claude
 
-1. Download the `.tar.gz` file from the Claude chat to a known location, e.g. `C:\Users\Matt\Desktop\Websites\Chronicle\`
+1. Download the `.tar.gz` file from the Claude chat — save it to `C:\Users\Matt\Desktop\Websites\Chronicle\`
 
-2. Extract it — this overwrites only changed files into `chronicle-export\`:
+2. Extract it — overwrites only changed files into `chronicle-export\`:
 ```bat
-tar -xzf C:\Users\Matt\Desktop\Websites\Chronicle\chronicle-bugfixes.tar.gz -C C:\Users\Matt\Desktop\Websites\Chronicle\
+tar -xzf C:\Users\Matt\Desktop\Websites\Chronicle\<filename>.tar.gz -C C:\Users\Matt\Desktop\Websites\Chronicle\
 ```
 
 3. Commit and push:
@@ -25,22 +25,39 @@ git push
 
 4. To trigger a release build (builds installers for Mac, Windows, Linux via GitHub Actions):
 ```bat
-git tag v0.X.Y
-git push origin v0.X.Y
+git tag v1.0.X
+git push origin v1.0.X
 ```
 
-GitHub Actions runs the tests and builds the installers automatically on tag push. A regular `git push` without a tag queues CI only — it won't produce a release.
+GitHub Actions runs the tests and builds the installers automatically on tag push. A regular `git push` without a tag runs CI only — no release produced.
+
+### Workflow files
+The `.github/workflows/` files are sometimes delivered as individual `.yml` downloads rather than inside a tarball. Save them directly to:
+- `C:\Users\Matt\Desktop\Websites\Chronicle\chronicle-export\.github\workflows\release.yml`
+- `C:\Users\Matt\Desktop\Websites\Chronicle\chronicle-export\.github\workflows\ci.yml`
+
+Then commit normally with `git add -A`.
 
 ### What NOT to do locally
 - No need to run `npm install` or `npm test` locally — GitHub Actions handles this
-- No need to restore the `better-sqlite3` mock locally — that's only needed in Claude's container environment
+- No need to restore the `better-sqlite3` mock locally — only needed in Claude's container
 - No need to run `vite build` locally
 
 ### Starting a new Claude session
-1. Upload the latest tarball (download it from the previous session, or export from your working directory)
+1. Upload the latest tarball (download from the previous session or export from working directory)
 2. Claude reads the Design Plan and Implementation Log before writing any code
 3. Claude verifies baseline test count before making changes
 4. At end of session: Claude delivers a new tarball + updated `Chronicle_Implementation_Log.md`
+
+### Version numbering
+- Version in `package.json` is synced from the git tag at build time by the release workflow — do NOT edit manually
+- Current version series: `v1.0.x` — increment patch number for each release
+- Last tag pushed: `v1.0.23`
+
+### GitHub repo
+- Owner: MattsTryingAgain
+- Repo: chronicle
+- URL: https://github.com/MattsTryingAgain/chronicle
 
 ---
 
@@ -54,11 +71,57 @@ GitHub Actions runs the tests and builds the installers automatically on tag pus
 **Stage 6 — complete.**
 **Stage 7 — complete.**
 
-**Test summary: 616/616 passing** *(584 from Stage 6 + 32 new in Stage 7)*
-**TypeScript: clean (`node_modules/.bin/tsc -p tsconfig.app.json --noEmit`)**
-**Build: clean (`node_modules/.bin/vite build`)**
+**Test summary: 616/616 passing**
+**TypeScript: clean**
+**Build: clean**
+**Current release: v1.0.23**
 
 ---
+
+## Bug Fixes Applied (Post-Stage 7, April 2026 Session)
+
+### Fix 1 — nsec import generating stale mnemonic / not starting relay
+**Root cause:** `importIdentity` called `setSession` directly instead of `beginSession`, bypassing relay startup and contact-list restore. If the user had partially started "Create identity" first, the stale mnemonic was never cleared.
+
+**Files changed:**
+- `src/context/AppContext.tsx`: `importIdentity` now calls `setGeneratedMnemonic(null)` then `beginSession(...)`.
+- `src/components/Onboarding.tsx`: `ImportScreen` no longer calls `setScreen('main')` redundantly.
+
+### Fix 2 — No relationship links shown in family tree
+**Root cause:** `AddPersonModal` never created `RelationshipClaim` events. `traverseGraph()` had no edges so the D3 tree only showed the root node.
+
+**Files changed:**
+- `src/components/AddPersonModal.tsx`: Rewritten with relationship selector UI (relationship-type dropdown + person picker). Creates forward and inverse `RelationshipClaim` via `addRelationship()`, publishes signed kind-30079 events.
+- `src/i18n/locales/en.json` + `fr.json`: Added missing `occupationLabel` / `occupationPlaceholder` keys.
+
+### Fix 3 — Data not persisting across app restarts
+**Root cause:** App used `sessionStorage` (cleared on close). Electron also lacked a named persistent partition so `localStorage` was also in-memory only.
+
+**Files changed:**
+- `src/context/AppContext.tsx`: All `sessionStorage` replaced with `localStorage`.
+- `electron/main.cjs`: Added `partition: 'persist:chronicle'` to `webPreferences`. Tells Electron to persist the browser session to disk in userData folder.
+
+### Fix 4 — Multiple app windows opening on launch
+**Root cause:** Single instance lock was in place but `app.whenReady()` (which creates the window) was outside the lock's `else` block, so every instance briefly opened a window before quitting.
+
+**Files changed:**
+- `electron/main.cjs`: Entire app lifecycle (`whenReady`, window creation, relay startup, auto-updater) moved inside the `else` block. Added EPIPE suppression on `process.stdout/stderr` to prevent Windows error dialogs when second instances quit abruptly.
+
+### Fix 5 — Auto-updater not working
+**Root causes:**
+1. `electron-updater` missing from `package.json` — not bundled in production.
+2. No `publish` config in `package.json` — `electron-builder` didn't upload `latest.yml` to GitHub Releases.
+3. Release workflow passed `GH_TOKEN` to build step, causing 403 errors when electron-builder tried to publish.
+4. Artifact paths pointed at `dist-electron/` but electron-builder outputs to `dist/`.
+5. Entire `dist/` folder was uploaded (Electron internals, locale files) instead of just installer files.
+
+**Files changed:**
+- `package.json`: Added `electron-updater` to `dependencies`. Added `publish` block for MattsTryingAgain/chronicle. Changed `build:electron` to append `--publish never`.
+- `.github/workflows/release.yml`: Removed `GH_TOKEN` from build steps. Build calls `vite build` + `electron-builder --publish never` directly. Artifact paths narrowed to `*.exe`, `*.dmg`, `*.AppImage`, `*.deb`, `*.blockmap`, `*.yml` only. Node bumped to 22. `npm ci` replaced with `npm install --ignore-scripts`.
+- `.github/workflows/ci.yml`: Same Node and npm fixes.
+
+---
+
 
 ## Known Gotchas — Read Before Writing Any Import Statements
 
