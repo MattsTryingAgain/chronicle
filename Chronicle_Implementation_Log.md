@@ -706,3 +706,15 @@ Comparable to Stage 4 in complexity. The platform abstraction layer is the most 
 - Faint generation labels on left edge for orientation
 - Drop shadows on cards for depth
 - Legend updated with spouse line style
+
+### Fix 7: Tree layout inversion + duplicate relationships in edit modal
+
+**Bug 1 — Tree layout inverted:** `assignGenerations` was not direction-aware. A `parent` edge from Matt→Stephen was being interpreted as "Matt is parent of Stephen → Stephen is gen+1" when traversed from Matt's side, but also as "parent" when traversed from Stephen's side — producing wrong results. Fixed by tracking whether we're traversing as the subject or object of each edge, then applying the correct delta in each case.
+
+**Bug 2 — Duplicate relationships in edit modal:** `getRelationshipsFor()` returns all edges touching a person (both A→B and B→A). The edit modal was showing both, producing "Child of Layla" and "Parent of Layla" for the same relationship. Fixed by filtering to only `subjectPubkey === editPerson.pubkey`.
+
+**Bug 3 — Relationship direction stored incorrectly:** The UI dropdown described what the *other* person is to the subject (e.g. "Stephen is Parent of Matt"), but the code was storing that relationship type directly on the subject (making Matt a "parent" of Stephen). Added `subjectRelationship()` which inverts before storing on the subject, so the semantics are consistent throughout.
+
+**UX improvement — relationship selector:** Added a contextual hint label under the person selector showing "[Other] is … of [subject]" so the direction is unambiguous.
+
+**Edit modal relationship display:** Now shows "Stephen is Parent of Matt" (reading correctly) rather than "child of Stephen" (confusing).

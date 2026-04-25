@@ -43,6 +43,9 @@ const FIELDS: FormField[] = [
   { field: 'occupation', labelKey: 'profile.addPerson.occupationLabel', placeholderKey: 'profile.addPerson.occupationPlaceholder' },
 ]
 
+// Relationship options: describes what the NEW/SELECTED person is to the person being added/edited.
+// e.g. adding Stephen with "Is parent of" Matt → subject=Matt, rel=child (Matt is child of Stephen)
+// The UI says "Stephen is [label] [person being added]"
 const RELATIONSHIP_OPTIONS: { value: RelationshipType; label: string }[] = [
   { value: 'parent',      label: 'Parent of' },
   { value: 'child',       label: 'Child of' },
@@ -51,6 +54,21 @@ const RELATIONSHIP_OPTIONS: { value: RelationshipType; label: string }[] = [
   { value: 'grandparent', label: 'Grandparent of' },
   { value: 'grandchild',  label: 'Grandchild of' },
 ]
+
+// When user picks "Stephen is Parent of Matt", we store:
+//   subject=Matt, related=Stephen, relationship='child'  (Matt is child of Stephen)
+//   subject=Stephen, related=Matt, relationship='parent' (Stephen is parent of Matt)
+// i.e. the selectedRelType describes what the RELATED person is to the subject.
+// We need to invert before storing on the subject.
+function subjectRelationship(selectedRel: RelationshipType): RelationshipType {
+  // What the related person IS to the subject → what the SUBJECT is to the related person
+  const inv: Record<RelationshipType, RelationshipType> = {
+    parent: 'child', child: 'parent',
+    spouse: 'spouse', sibling: 'sibling',
+    grandparent: 'grandchild', grandchild: 'grandparent',
+  }
+  return inv[selectedRel] ?? selectedRel
+}
 
 function bestExistingValue(claims: FactClaim[], field: FactField): string {
   const candidates = claims
@@ -77,9 +95,11 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
     ? store.getClaimsForPerson(editPerson.pubkey)
     : []
 
-  // Existing relationships shown in edit mode (for reference)
+  // Existing relationships shown in edit mode.
+  // Only show edges where this person is the SUBJECT to avoid showing both
+  // directions of the same relationship (we store both A→B and B→A).
   const existingRelationships = isEdit && editPerson
-    ? getRelationshipsFor(editPerson.pubkey)
+    ? getRelationshipsFor(editPerson.pubkey).filter(r => r.subjectPubkey === editPerson.pubkey)
     : []
 
   const initialFieldValues = (): Partial<Record<FactField, string>> => {
@@ -196,13 +216,18 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
       // unsigned path and edit mode need this guarantee.
       persistNow()
 
-      // Relationship linking — works in both add and edit modes
+      // Relationship linking — works in both add and edit modes.
+      // relationshipType = what the RELATED person is to the subject person (as shown in the UI).
+      // e.g. user picks "Stephen is Parent of Matt" → relationshipType='parent'
+      //   subject (Matt) is CHILD of related (Stephen) → subjectRel = 'child'
+      //   related (Stephen) is PARENT of subject (Matt) → relatedRel = 'parent' (= relationshipType)
       if (relatedToPubkey && session?.nsec) {
+        const subjectRel = subjectRelationship(relationshipType)
         const relEvent = buildRelationshipClaim({
           claimantNpub: claimantPubkey,
           claimantNsec: session.nsec,
           subjectNpub: person.pubkey,
-          relationship: relationshipType,
+          relationship: subjectRel,
           sensitive: false,
         })
         const rel: RelationshipClaim = {
@@ -210,7 +235,7 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
           claimantPubkey,
           subjectPubkey: person.pubkey,
           relatedPubkey: relatedToPubkey,
-          relationship: relationshipType,
+          relationship: subjectRel,
           sensitive: false,
           createdAt: now,
           retracted: false,
@@ -218,12 +243,11 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
         addRelationship(rel)
         publishEvent(relEvent)
 
-        const inverseType = inverseRelationship(relationshipType)
         const invEvent = buildRelationshipClaim({
           claimantNpub: claimantPubkey,
           claimantNsec: session.nsec,
           subjectNpub: relatedToPubkey,
-          relationship: inverseType,
+          relationship: relationshipType,
           sensitive: false,
         })
         const invRel: RelationshipClaim = {
@@ -231,7 +255,7 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
           claimantPubkey,
           subjectPubkey: relatedToPubkey,
           relatedPubkey: person.pubkey,
-          relationship: inverseType,
+          relationship: relationshipType,
           sensitive: false,
           createdAt: now,
           retracted: false,
@@ -239,12 +263,13 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
         addRelationship(invRel)
         publishEvent(invEvent)
       } else if (relatedToPubkey) {
+        const subjectRel = subjectRelationship(relationshipType)
         const rel: RelationshipClaim = {
           eventId: `local-rel-${person.pubkey}-${relatedToPubkey}-${now}`,
           claimantPubkey,
           subjectPubkey: person.pubkey,
           relatedPubkey: relatedToPubkey,
-          relationship: relationshipType,
+          relationship: subjectRel,
           sensitive: false,
           createdAt: now,
           retracted: false,
@@ -256,7 +281,7 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
           claimantPubkey,
           subjectPubkey: relatedToPubkey,
           relatedPubkey: person.pubkey,
-          relationship: inverseRelationship(relationshipType),
+          relationship: relationshipType,
           sensitive: false,
           createdAt: now,
           retracted: false,
@@ -340,9 +365,11 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
               <label>Current relationships</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {existingRelationships.map(rel => {
-                  const other = store.getPerson(
-                    rel.subjectPubkey === editPerson?.pubkey ? rel.relatedPubkey : rel.subjectPubkey
-                  )
+                  // rel.subjectPubkey === editPerson.pubkey (already filtered)
+                  // rel.relationship = what editPerson IS to rel.relatedPubkey
+                  // Show as: "[Other] is [inverseRel] of [editPerson]"
+                  const other = store.getPerson(rel.relatedPubkey)
+                  const otherRel = inverseRelationship(rel.relationship as RelationshipType)
                   return (
                     <div key={rel.eventId} style={{
                       padding: '6px 10px',
@@ -351,11 +378,13 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
                       fontSize: 13,
                       color: 'var(--ink)',
                       display: 'flex',
-                      gap: 8,
+                      gap: 6,
+                      alignItems: 'center',
                     }}>
-                      <span style={{ color: 'var(--ink-muted)', textTransform: 'capitalize' }}>{rel.relationship}</span>
-                      <span>of</span>
                       <span style={{ fontWeight: 500 }}>{other?.displayName ?? rel.relatedPubkey.slice(0, 12) + '…'}</span>
+                      <span style={{ color: 'var(--ink-muted)' }}>is</span>
+                      <span style={{ textTransform: 'capitalize' }}>{otherRel}</span>
+                      <span style={{ color: 'var(--ink-muted)' }}>of {editPerson?.displayName}</span>
                     </div>
                   )
                 })}
@@ -382,17 +411,26 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
                     <option key={p.pubkey} value={p.pubkey}>{p.displayName}</option>
                   ))}
               </select>
-              {relatedToPubkey && (
-                <select
-                  className="form-select mt-2"
-                  value={relationshipType}
-                  onChange={e => setRelationshipType(e.target.value as RelationshipType)}
-                >
-                  {RELATIONSHIP_OPTIONS.map(({ value, label }) => (
-                    <option key={value} value={value}>{label}</option>
-                  ))}
-                </select>
-              )}
+              {relatedToPubkey && (() => {
+                const otherName = store.getPerson(relatedToPubkey)?.displayName ?? 'them'
+                const subjectName = isEdit ? editPerson?.displayName : name.trim() || 'this person'
+                return (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginBottom: 4 }}>
+                      {otherName} is … of {subjectName}
+                    </div>
+                    <select
+                      className="form-select"
+                      value={relationshipType}
+                      onChange={e => setRelationshipType(e.target.value as RelationshipType)}
+                    >
+                      {RELATIONSHIP_OPTIONS.map(({ value, label }) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  </div>
+                )
+              })()}
             </div>
           )}
         </div>

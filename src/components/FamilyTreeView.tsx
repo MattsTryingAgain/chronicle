@@ -76,8 +76,19 @@ function buildNodeData(pubkey: string, generation: number): NodeData {
 
 /**
  * Assign a generation number to each node via BFS.
- * parent-of edges move up (gen - 1), child-of / grandparent / grandchild
- * edges move down (gen + 1), spouse / sibling edges stay on same row.
+ *
+ * Edge semantics: GraphEdge.relationship describes what fromPubkey IS TO toPubkey.
+ * e.g. fromPubkey=Matt, toPubkey=Layla, relationship='parent' → Matt is parent of Layla
+ *      → from Matt's perspective, Layla is gen+1 (descendant)
+ *      → from Layla's perspective, Matt is gen-1 (ancestor)
+ *
+ * When traversing from `current`:
+ *   - If current === fromPubkey: relationship describes current→neighbour
+ *       parent/grandparent → neighbour is gen+1 (current is above)
+ *       child/grandchild   → neighbour is gen-1 (current is below)
+ *   - If current === toPubkey: relationship describes neighbour→current (inverse)
+ *       parent/grandparent → neighbour is gen-1 (neighbour is above current)
+ *       child/grandchild   → neighbour is gen+1 (neighbour is below current)
  */
 function assignGenerations(
   rootPubkey: string,
@@ -87,23 +98,34 @@ function assignGenerations(
   const genMap = new Map<string, number>()
   genMap.set(rootPubkey, 0)
 
-  // Build adjacency: pubkey → [{neighbour, relationship, direction}]
-  const adj = new Map<string, Array<{ neighbour: string; rel: string }>>()
+  // Build direction-aware adjacency
+  const adj = new Map<string, Array<{ neighbour: string; rel: string; asSubject: boolean }>>()
   for (const n of nodes) adj.set(n, [])
   for (const e of edges) {
-    adj.get(e.fromPubkey)?.push({ neighbour: e.toPubkey, rel: e.relationship })
-    adj.get(e.toPubkey)?.push({ neighbour: e.fromPubkey, rel: e.relationship })
+    // fromPubkey is subject of the relationship
+    adj.get(e.fromPubkey)?.push({ neighbour: e.toPubkey, rel: e.relationship, asSubject: true })
+    // toPubkey is the object — sees inverse
+    adj.get(e.toPubkey)?.push({ neighbour: e.fromPubkey, rel: e.relationship, asSubject: false })
   }
 
   const queue = [rootPubkey]
   while (queue.length > 0) {
     const current = queue.shift()!
     const currentGen = genMap.get(current) ?? 0
-    for (const { neighbour, rel } of (adj.get(current) ?? [])) {
+    for (const { neighbour, rel, asSubject } of (adj.get(current) ?? [])) {
       if (genMap.has(neighbour)) continue
       let delta = 0
-      if (rel === 'parent' || rel === 'grandparent') delta = -1
-      else if (rel === 'child' || rel === 'grandchild') delta = 1
+      if (asSubject) {
+        // current IS rel TO neighbour
+        // e.g. current=parent of neighbour → neighbour is one gen below
+        if (rel === 'parent' || rel === 'grandparent') delta = 1   // neighbour is child/grandchild
+        else if (rel === 'child' || rel === 'grandchild') delta = -1 // neighbour is parent/grandparent
+      } else {
+        // neighbour IS rel TO current (inverse perspective)
+        // e.g. neighbour=parent of current → neighbour is one gen above
+        if (rel === 'parent' || rel === 'grandparent') delta = -1  // neighbour is ancestor
+        else if (rel === 'child' || rel === 'grandchild') delta = 1  // neighbour is descendant
+      }
       // spouse, sibling → delta = 0
       genMap.set(neighbour, currentGen + delta)
       queue.push(neighbour)
