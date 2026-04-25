@@ -691,3 +691,18 @@ Comparable to Stage 4 in complexity. The platform abstraction layer is the most 
 - Edit modal now shows existing relationships for the person
 - Both add and edit modes show the "add a relationship" UI
 - Relationship save logic no longer gated to add-only; works in edit mode too
+
+### Fix 6: Family tree visualisation — generational layout
+
+**Problem:** Force-directed layout placed nodes randomly — not recognisable as a family tree.
+
+**Replacement:** Generational hierarchical layout:
+- BFS from root assigns each person a generation number (parent edges = gen-1, child edges = gen+1, spouse/sibling = same gen)
+- Nodes laid out in horizontal rows per generation, evenly spaced, centred on root
+- Parent→child edges drawn as elbow connectors (vertical with rounded corners) rather than straight lines
+- Spouse/sibling edges drawn as short horizontal dashed lines between same-row nodes
+- Auto-zoom-to-fit on load so the whole tree is visible without manual scrolling
+- Larger nodes (180×64px vs 160×56px), slightly larger text
+- Faint generation labels on left edge for orientation
+- Drop shadows on cards for depth
+- Legend updated with spouse line style
