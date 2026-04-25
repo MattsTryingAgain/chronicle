@@ -55,6 +55,7 @@ export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string)
   const [query, setQuery] = useState('')
   const [selectedPubkey, setSelectedPubkey] = useState<string | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
+  const [editingPubkey, setEditingPubkey] = useState<string | null>(null)
   const [, forceUpdate] = useState(0)
 
   const refresh = useCallback(() => forceUpdate(n => n + 1), [])
@@ -68,6 +69,7 @@ export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string)
 
   const handlePersonSaved = useCallback((person: Person) => {
     setShowAddModal(false)
+    setEditingPubkey(null)
     setSelectedPubkey(person.pubkey)
     refresh()
   }, [refresh])
@@ -89,7 +91,7 @@ export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string)
             claims={selectedClaims}
             endorsements={selectedEndorsements}
             isOwn={selectedPubkey === session?.npub}
-            onAddInfo={() => setShowAddModal(true)}
+            onAddInfo={() => setEditingPubkey(selectedPubkey)}
           />
           {onSelectPerson && (
             <div className="mt-3">
@@ -166,6 +168,18 @@ export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string)
           onCancel={() => setShowAddModal(false)}
         />
       )}
+
+      {editingPubkey && (() => {
+        const ep = store.getPerson(editingPubkey)
+        return ep ? (
+          <AddPersonModal
+            mode="edit"
+            editPerson={ep}
+            onSave={handlePersonSaved}
+            onCancel={() => setEditingPubkey(null)}
+          />
+        ) : null
+      })()}
     </div>
   )
 }

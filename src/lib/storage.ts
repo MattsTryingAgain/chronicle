@@ -194,6 +194,10 @@ export class MemoryStore {
     this.claims.set(claim.eventId, claim)
   }
 
+  getAllClaims(): import('../types/chronicle').FactClaim[] {
+    return Array.from(this.claims.values())
+  }
+
   getClaimsForPerson(
     subjectPubkey: string,
   ): import('../types/chronicle').FactClaim[] {

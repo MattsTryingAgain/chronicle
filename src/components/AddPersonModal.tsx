@@ -1,8 +1,12 @@
 /**
  * AddPersonModal
- * Used for adding yourself (onboarding) or adding an ancestor.
- * Creates a Person record + FactClaim events in the store.
- * Optionally links the new person to an existing person via a RelationshipClaim.
+ * Handles three modes:
+ *  - 'self'     — adding yourself during onboarding
+ *  - 'ancestor' — adding a new ancestor
+ *  - 'edit'     — adding/updating fact claims on an existing person
+ *
+ * In edit mode the person already exists; we only add new fact claims for
+ * fields the user fills in. The name field is hidden (person already named).
  */
 
 import { useState, useCallback } from 'react'
@@ -17,8 +21,9 @@ import type { RelationshipType } from '../types/chronicle'
 import type { RelationshipClaim } from '../lib/graph'
 
 interface AddPersonModalProps {
-  mode: 'self' | 'ancestor'
-  selfPubkey?: string    // pass in when mode === 'self' (already created)
+  mode: 'self' | 'ancestor' | 'edit'
+  selfPubkey?: string       // required when mode === 'self'
+  editPerson?: Person       // required when mode === 'edit'
   onSave: (person: Person) => void
   onCancel: () => void
 }
@@ -30,10 +35,10 @@ type FormField = {
 }
 
 const FIELDS: FormField[] = [
-  { field: 'born',       labelKey: 'profile.addPerson.bornLabel',        placeholderKey: 'profile.addPerson.bornPlaceholder' },
-  { field: 'birthplace', labelKey: 'profile.addPerson.birthplaceLabel',   placeholderKey: 'profile.addPerson.birthplacePlaceholder' },
-  { field: 'died',       labelKey: 'profile.addPerson.diedLabel',         placeholderKey: 'profile.addPerson.diedPlaceholder' },
-  { field: 'occupation', labelKey: 'profile.addPerson.occupationLabel',   placeholderKey: 'profile.addPerson.occupationPlaceholder' },
+  { field: 'born',       labelKey: 'profile.addPerson.bornLabel',       placeholderKey: 'profile.addPerson.bornPlaceholder' },
+  { field: 'birthplace', labelKey: 'profile.addPerson.birthplaceLabel', placeholderKey: 'profile.addPerson.birthplacePlaceholder' },
+  { field: 'died',       labelKey: 'profile.addPerson.diedLabel',       placeholderKey: 'profile.addPerson.diedPlaceholder' },
+  { field: 'occupation', labelKey: 'profile.addPerson.occupationLabel', placeholderKey: 'profile.addPerson.occupationPlaceholder' },
 ]
 
 const RELATIONSHIP_OPTIONS: { value: RelationshipType; label: string }[] = [
@@ -45,61 +50,93 @@ const RELATIONSHIP_OPTIONS: { value: RelationshipType; label: string }[] = [
   { value: 'grandchild',  label: 'Grandchild of' },
 ]
 
-export function AddPersonModal({ mode, selfPubkey, onSave, onCancel }: AddPersonModalProps) {
+function bestExistingValue(claims: FactClaim[], field: FactField): string {
+  const candidates = claims
+    .filter(c => c.field === field && !c.retracted)
+    .sort((a, b) => b.confidenceScore - a.confidenceScore)
+  return candidates[0]?.value ?? ''
+}
+
+function inverseRelationship(r: RelationshipType): RelationshipType {
+  const map: Record<RelationshipType, RelationshipType> = {
+    parent: 'child', child: 'parent',
+    spouse: 'spouse', sibling: 'sibling',
+    grandparent: 'grandchild', grandchild: 'grandparent',
+  }
+  return map[r] ?? 'child'
+}
+
+export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel }: AddPersonModalProps) {
   const { t } = useTranslation()
   const { session, publishEvent } = useApp()
-  const [name, setName] = useState('')
-  const [fieldValues, setFieldValues] = useState<Partial<Record<FactField, string>>>({})
+
+  const isEdit = mode === 'edit'
+  const existingClaims = isEdit && editPerson
+    ? store.getClaimsForPerson(editPerson.pubkey)
+    : []
+
+  const initialFieldValues = (): Partial<Record<FactField, string>> => {
+    if (!isEdit) return {}
+    const vals: Partial<Record<FactField, string>> = {}
+    for (const { field } of FIELDS) {
+      const v = bestExistingValue(existingClaims, field)
+      if (v) vals[field] = v
+    }
+    return vals
+  }
+
+  const [name, setName] = useState(isEdit ? (editPerson?.displayName ?? '') : '')
+  const [fieldValues, setFieldValues] = useState<Partial<Record<FactField, string>>>(initialFieldValues)
   const [evidence, setEvidence] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  // Relationship linking
   const [relatedToPubkey, setRelatedToPubkey] = useState<string>('')
   const [relationshipType, setRelationshipType] = useState<RelationshipType>('child')
 
   const allPersons = store.getAllPersons()
 
+  const persistNow = useCallback(() => {
+    try { localStorage.setItem('chronicle:store', store.serialise()) } catch { /* silent */ }
+  }, [])
+
   const handleSave = useCallback(async () => {
     setError('')
-    if (!name.trim()) { setError('Please enter a name.'); return }
+    if (!isEdit && !name.trim()) { setError('Please enter a name.'); return }
     setSaving(true)
     try {
       const now = Math.floor(Date.now() / 1000)
 
-      // Determine pubkey
-      let pubkey: string
-      let isLiving: boolean
+      let person: Person
 
-      if (mode === 'self' && selfPubkey) {
-        pubkey = selfPubkey
-        isLiving = true
+      if (isEdit && editPerson) {
+        person = editPerson
       } else {
-        // Ancestor — generate independent random keypair
-        const kp = generateAncestorKeyPair()
-        pubkey = kp.npub
-        isLiving = false
+        let pubkey: string
+        let isLiving: boolean
+
+        if (mode === 'self' && selfPubkey) {
+          pubkey = selfPubkey
+          isLiving = true
+        } else {
+          const kp = generateAncestorKeyPair()
+          pubkey = kp.npub
+          isLiving = false
+        }
+
+        person = { pubkey, displayName: name.trim(), isLiving, createdAt: now }
+        store.upsertPerson(person)
       }
 
-      // Create person record
-      const person: Person = {
-        pubkey,
-        displayName: name.trim(),
-        isLiving,
-        createdAt: now,
-      }
-      store.upsertPerson(person)
-
-      const claimantPubkey = session?.npub ?? selfPubkey ?? pubkey
+      const claimantPubkey = session?.npub ?? selfPubkey ?? person.pubkey
       let claimIdx = 0
 
-      // Helper: build, store, and publish a fact claim
       const addAndPublishClaim = (field: FactClaim['field'], value: string, evidenceText?: string) => {
         if (session?.nsec) {
           const event = buildFactClaim({
             claimantNpub: claimantPubkey,
             claimantNsec: session.nsec,
-            subjectNpub: pubkey,
+            subjectNpub: person.pubkey,
             field,
             value,
             evidence: evidenceText,
@@ -107,7 +144,7 @@ export function AddPersonModal({ mode, selfPubkey, onSave, onCancel }: AddPerson
           const claim: FactClaim = {
             eventId: event.id,
             claimantPubkey,
-            subjectPubkey: pubkey,
+            subjectPubkey: person.pubkey,
             field,
             value,
             evidence: evidenceText,
@@ -119,9 +156,9 @@ export function AddPersonModal({ mode, selfPubkey, onSave, onCancel }: AddPerson
           publishEvent(event)
         } else {
           const claim: FactClaim = {
-            eventId: `local-${pubkey}-${field}-${now}-${claimIdx++}`,
+            eventId: `local-${person.pubkey}-${field}-${now}-${claimIdx++}`,
             claimantPubkey,
-            subjectPubkey: pubkey,
+            subjectPubkey: person.pubkey,
             field,
             value,
             evidence: evidenceText,
@@ -133,30 +170,37 @@ export function AddPersonModal({ mode, selfPubkey, onSave, onCancel }: AddPerson
         }
       }
 
-      // Name claim
-      addAndPublishClaim('name', name.trim())
+      if (!isEdit) {
+        addAndPublishClaim('name', name.trim())
+      }
 
-      // Other field claims
       for (const { field } of FIELDS) {
         const value = fieldValues[field]?.trim()
         if (!value) continue
+        if (isEdit) {
+          const existing = bestExistingValue(existingClaims, field)
+          if (value === existing) continue
+        }
         addAndPublishClaim(field, value, evidence.trim() || undefined)
       }
 
-      // ── Relationship claim ────────────────────────────────────────────────
-      if (relatedToPubkey && session?.nsec) {
-        // Signed path: build a kind-30079 event and store in graph
+      // Always persist explicitly — signed path via publishEvent also persists, but
+      // unsigned path and edit mode need this guarantee.
+      persistNow()
+
+      // Relationship linking — add modes only
+      if (!isEdit && relatedToPubkey && session?.nsec) {
         const relEvent = buildRelationshipClaim({
           claimantNpub: claimantPubkey,
           claimantNsec: session.nsec,
-          subjectNpub: pubkey,
+          subjectNpub: person.pubkey,
           relationship: relationshipType,
           sensitive: false,
         })
         const rel: RelationshipClaim = {
           eventId: relEvent.id,
           claimantPubkey,
-          subjectPubkey: pubkey,
+          subjectPubkey: person.pubkey,
           relatedPubkey: relatedToPubkey,
           relationship: relationshipType,
           sensitive: false,
@@ -166,7 +210,6 @@ export function AddPersonModal({ mode, selfPubkey, onSave, onCancel }: AddPerson
         addRelationship(rel)
         publishEvent(relEvent)
 
-        // Also add the inverse edge so the graph traversal sees both directions
         const inverseType = inverseRelationship(relationshipType)
         const invEvent = buildRelationshipClaim({
           claimantNpub: claimantPubkey,
@@ -179,7 +222,7 @@ export function AddPersonModal({ mode, selfPubkey, onSave, onCancel }: AddPerson
           eventId: invEvent.id,
           claimantPubkey,
           subjectPubkey: relatedToPubkey,
-          relatedPubkey: pubkey,
+          relatedPubkey: person.pubkey,
           relationship: inverseType,
           sensitive: false,
           createdAt: now,
@@ -187,12 +230,11 @@ export function AddPersonModal({ mode, selfPubkey, onSave, onCancel }: AddPerson
         }
         addRelationship(invRel)
         publishEvent(invEvent)
-      } else if (relatedToPubkey) {
-        // Unsigned local path (no active session nsec)
+      } else if (!isEdit && relatedToPubkey) {
         const rel: RelationshipClaim = {
-          eventId: `local-rel-${pubkey}-${relatedToPubkey}-${now}`,
+          eventId: `local-rel-${person.pubkey}-${relatedToPubkey}-${now}`,
           claimantPubkey,
-          subjectPubkey: pubkey,
+          subjectPubkey: person.pubkey,
           relatedPubkey: relatedToPubkey,
           relationship: relationshipType,
           sensitive: false,
@@ -202,10 +244,10 @@ export function AddPersonModal({ mode, selfPubkey, onSave, onCancel }: AddPerson
         addRelationship(rel)
 
         const invRel: RelationshipClaim = {
-          eventId: `local-rel-${relatedToPubkey}-${pubkey}-${now}`,
+          eventId: `local-rel-${relatedToPubkey}-${person.pubkey}-${now}`,
           claimantPubkey,
           subjectPubkey: relatedToPubkey,
-          relatedPubkey: pubkey,
+          relatedPubkey: person.pubkey,
           relationship: inverseRelationship(relationshipType),
           sensitive: false,
           createdAt: now,
@@ -220,101 +262,100 @@ export function AddPersonModal({ mode, selfPubkey, onSave, onCancel }: AddPerson
     } finally {
       setSaving(false)
     }
-  }, [name, fieldValues, evidence, mode, selfPubkey, relatedToPubkey, relationshipType, session, publishEvent, onSave, t])
+  }, [name, fieldValues, evidence, mode, isEdit, editPerson, existingClaims, selfPubkey,
+      relatedToPubkey, relationshipType, session, publishEvent, persistNow, onSave, t])
+
+  const modalTitle = isEdit
+    ? `Edit ${editPerson?.displayName ?? 'person'}`
+    : mode === 'self'
+      ? t('profile.addPerson.titleSelf')
+      : t('profile.addPerson.titleAncestor')
 
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div className="modal-panel" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h2 className="modal-title">
-            {mode === 'self'
-              ? t('profile.addPerson.titleSelf')
-              : t('profile.addPerson.titleAncestor')}
-          </h2>
-          <button className="btn btn-ghost btn-sm" onClick={onCancel} aria-label="Close">✕</button>
+          <h2 className="modal-title">{modalTitle}</h2>
+          <button className="btn btn-ghost btn-sm" onClick={onCancel}>✕</button>
         </div>
+
         <div className="modal-body">
-          <div className="field">
-            <label htmlFor="ap-name">{t('profile.addPerson.nameLabel')}</label>
-            <input
-              id="ap-name"
-              type="text"
-              placeholder={t('profile.addPerson.namePlaceholder')}
-              value={name}
-              onChange={e => setName(e.target.value)}
-              autoFocus
-            />
-          </div>
+          {error && (
+            <div className="alert alert-danger" style={{ marginBottom: 'var(--space-md)' }}>
+              {error}
+            </div>
+          )}
 
-          <hr className="divider" style={{ margin: '4px 0' }} />
+          {/* Name — only shown in add modes */}
+          {!isEdit && (
+            <div className="form-group">
+              <label htmlFor="ap-name">{t('profile.addPerson.nameLabel')}</label>
+              <input
+                id="ap-name"
+                className="form-control"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder={t('profile.addPerson.namePlaceholder')}
+                autoFocus
+              />
+            </div>
+          )}
 
+          {/* Fact fields */}
           {FIELDS.map(({ field, labelKey, placeholderKey }) => (
-            <div key={field} className="field">
+            <div className="form-group" key={field}>
               <label htmlFor={`ap-${field}`}>{t(labelKey as never)}</label>
               <input
                 id={`ap-${field}`}
-                type="text"
-                placeholder={t(placeholderKey as never)}
+                className="form-control"
                 value={fieldValues[field] ?? ''}
                 onChange={e => setFieldValues(prev => ({ ...prev, [field]: e.target.value }))}
+                placeholder={t(placeholderKey as never)}
               />
             </div>
           ))}
 
-          <div className="field">
+          <div className="form-group">
             <label htmlFor="ap-evidence">{t('profile.addPerson.evidenceLabel')}</label>
             <input
               id="ap-evidence"
-              type="text"
-              placeholder={t('profile.addPerson.evidencePlaceholder')}
+              className="form-control"
               value={evidence}
               onChange={e => setEvidence(e.target.value)}
+              placeholder={t('profile.addPerson.evidencePlaceholder')}
             />
-            <span className="field-hint">Citing a source improves confidence in this record.</span>
           </div>
 
-          {/* ── Relationship section ── */}
-          {mode !== 'self' && allPersons.length > 0 && (
-            <>
-              <hr className="divider" style={{ margin: '8px 0' }} />
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-                Relationship
-              </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <div className="field" style={{ flex: '1 1 auto', marginBottom: 0 }}>
-                  <select
-                    value={relationshipType}
-                    onChange={e => setRelationshipType(e.target.value as RelationshipType)}
-                    style={{ width: '100%' }}
-                  >
-                    {RELATIONSHIP_OPTIONS.map(o => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field" style={{ flex: '2 1 auto', marginBottom: 0 }}>
-                  <select
-                    value={relatedToPubkey}
-                    onChange={e => setRelatedToPubkey(e.target.value)}
-                    style={{ width: '100%' }}
-                  >
-                    <option value="">— select a person —</option>
-                    {allPersons.map(p => (
-                      <option key={p.pubkey} value={p.pubkey}>{p.displayName}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              {!relatedToPubkey && (
-                <span className="field-hint" style={{ marginTop: 4 }}>
-                  Optional — link this person to someone already in your tree.
-                </span>
+          {/* Relationship linking — add mode only */}
+          {!isEdit && allPersons.length > 0 && (
+            <div className="form-group">
+              <label htmlFor="ap-related">{t('profile.addPerson.relatedToLabel', { defaultValue: 'Related to' })}</label>
+              <select
+                id="ap-related"
+                className="form-select"
+                value={relatedToPubkey}
+                onChange={e => setRelatedToPubkey(e.target.value)}
+              >
+                <option value="">{t('profile.addPerson.noRelation', { defaultValue: 'No relationship' })}</option>
+                {allPersons.map(p => (
+                  <option key={p.pubkey} value={p.pubkey}>{p.displayName}</option>
+                ))}
+              </select>
+              {relatedToPubkey && (
+                <select
+                  className="form-select mt-2"
+                  value={relationshipType}
+                  onChange={e => setRelationshipType(e.target.value as RelationshipType)}
+                >
+                  {RELATIONSHIP_OPTIONS.map(({ value, label }) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
               )}
-            </>
+            </div>
           )}
-
-          {error && <div className="alert alert-danger">{error}</div>}
         </div>
+
         <div className="modal-footer">
           <button className="btn btn-outline" onClick={onCancel}>
             {t('profile.addPerson.cancelButton')}
@@ -322,25 +363,12 @@ export function AddPersonModal({ mode, selfPubkey, onSave, onCancel }: AddPerson
           <button
             className="btn btn-primary"
             onClick={handleSave}
-            disabled={saving || !name.trim()}
+            disabled={saving || (!isEdit && !name.trim())}
           >
-            {saving ? 'Saving…' : t('profile.addPerson.saveButton')}
+            {saving ? 'Saving…' : isEdit ? 'Save changes' : t('profile.addPerson.saveButton')}
           </button>
         </div>
       </div>
     </div>
   )
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function inverseRelationship(r: RelationshipType): RelationshipType {
-  switch (r) {
-    case 'parent':      return 'child'
-    case 'child':       return 'parent'
-    case 'grandparent': return 'grandchild'
-    case 'grandchild':  return 'grandparent'
-    case 'spouse':      return 'spouse'
-    case 'sibling':     return 'sibling'
-  }
 }

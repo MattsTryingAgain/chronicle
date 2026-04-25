@@ -675,3 +675,30 @@ Comparable to Stage 4 in complexity. The platform abstraction layer is the most 
 - Apple Developer account enrolled (for iOS device testing and App Store)
 - Google Play developer account created (for Android distribution)
 - Stage 7 complete ✅
+
+---
+
+## Bug Fixes — Persistence & Edit UX (post-Stage 7)
+
+### Fix 1: Fact claims and endorsements not restored after logout/login
+
+**Root cause:** `AppContext` store restore on mount only rehydrated `persons` — it did not reload `claims`, `endorsements`, or `rawEvents` even though `MemoryStore.serialise()` included all of them.
+
+**Fix:**
+- Added `getAllClaims()` to `MemoryStore` (public API alongside existing `getClaimsForPerson`)
+- `AppContext` restore loop now calls `store.addClaim(c)` for every saved claim, `store.addEndorsement(e)` for every endorsement, and `store.addRawEvent(ev)` for every raw event
+
+### Fix 2: Edit modal asks for name again; no pre-population
+
+**Root cause:** `TreeView` opened `AddPersonModal` with `mode="ancestor"` for both new persons and existing person edits. The modal had no concept of editing an existing person, so it showed a blank form including the name field.
+
+**Fix:**
+- Added `mode="edit"` and `editPerson?: Person` prop to `AddPersonModal`
+- In edit mode: name field is hidden (person already named); all fact fields are pre-populated with the current best claim value for each field
+- Saving in edit mode only adds a new claim for fields whose value has actually changed — unchanged fields are skipped, preventing duplicate claims
+- `persistNow()` is always called explicitly at end of save (previously the unsigned path skipped persistence entirely)
+- `TreeView` tracks `editingPubkey` separately from `showAddModal`; clicking "Edit" on a ProfileCard opens the modal in edit mode for that person
+
+### Fix 3: AddPersonModal never explicitly persisted on unsigned path
+
+The unsigned (no active session nsec) save path called `store.addClaim()` but never `localStorage.setItem`. Data survived the current session but was lost on logout. Fixed by always calling `persistNow()` after all store mutations, regardless of path.

@@ -261,6 +261,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (identity) {
           store.setIdentity(identity)
           for (const p of restored.getAllPersons()) store.upsertPerson(p)
+          for (const c of restored.getAllClaims()) store.addClaim(c)
+          for (const e of restored.getAllEndorsements()) store.addEndorsement(e)
+          for (const ev of restored.getAllRawEvents()) store.addRawEvent(ev)
           setHasStoredIdentity(true)
           setScreen('onboarding-unlock')
         }
