@@ -33,7 +33,7 @@ import { TrustRevocationStore, type TrustRevocation } from '../lib/trustRevocati
 import { RelayTable } from '../lib/relayGossip'
 import { JoinRequestQueue, type JoinRequest } from '../lib/joinRequest'
 import { generateFamilyKey, encodeFamilyKey, admitMember } from '../lib/privacyTier'
-import { serialiseGraph, deserialiseGraph } from '../lib/graph'
+import { serialiseGraph, deserialiseGraph, retractRelationship, getRelationshipsFor } from '../lib/graph'
 import { storageGet, storageSet } from '../lib/appStorage'
 import { keyRecoveryStore } from '../lib/keyRecovery'
 import { mediaCache, type MediaCacheEntry } from '../lib/blossom'
@@ -76,6 +76,7 @@ interface AppContextValue {
   createIdentity: (displayName: string, password: string) => Promise<KeyMaterial>
   unlockIdentity: (password: string) => Promise<boolean>
   importIdentity: (input: string, displayName: string, password: string) => Promise<KeyMaterial>
+  deletePerson: (pubkey: string) => void
   signOut: () => void
   hasStoredIdentity: boolean
   isGeneratingKey: boolean
@@ -434,6 +435,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [persistStore, allowlistAdd, beginSession],
   )
 
+  // ── deletePerson ───────────────────────────────────────────────────────────
+
+  const deletePerson = useCallback((pubkey: string) => {
+    // Remove from store
+    store.deletePerson(pubkey)
+    // Retract all relationships involving this person
+    const rels = getRelationshipsFor(pubkey)
+    for (const rel of rels) {
+      retractRelationship(rel.eventId)
+    }
+    persistStore()
+  }, [persistStore])
+
   // ── signOut ────────────────────────────────────────────────────────────────
 
   const signOut = useCallback(() => {
@@ -510,6 +524,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         createIdentity,
         unlockIdentity,
         importIdentity,
+        deletePerson,
         signOut,
         hasStoredIdentity,
         isGeneratingKey,

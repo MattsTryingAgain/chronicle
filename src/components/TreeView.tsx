@@ -51,7 +51,7 @@ function PersonListItem({ person, onClick }: { person: Person; onClick: () => vo
 
 export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string) => void } = {}) {
   const { t } = useTranslation()
-  const { session } = useApp()
+  const { session, deletePerson } = useApp()
   const [query, setQuery] = useState('')
   const [selectedPubkey, setSelectedPubkey] = useState<string | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
@@ -66,6 +66,13 @@ export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string)
   const selectedEndorsements = selectedClaims.flatMap(c =>
     store.getEndorsementsForClaim(c.eventId)
   )
+
+  const handlePersonDeleted = useCallback((pubkey: string) => {
+    deletePerson(pubkey)
+    setEditingPubkey(null)
+    setSelectedPubkey(null)
+    refresh()
+  }, [deletePerson, refresh])
 
   const handlePersonSaved = useCallback((person: Person) => {
     setShowAddModal(false)
@@ -176,6 +183,7 @@ export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string)
             mode="edit"
             editPerson={ep}
             onSave={handlePersonSaved}
+            onDelete={handlePersonDeleted}
             onCancel={() => setEditingPubkey(null)}
           />
         ) : null

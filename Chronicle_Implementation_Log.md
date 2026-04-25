@@ -718,3 +718,13 @@ Comparable to Stage 4 in complexity. The platform abstraction layer is the most 
 **UX improvement — relationship selector:** Added a contextual hint label under the person selector showing "[Other] is … of [subject]" so the direction is unambiguous.
 
 **Edit modal relationship display:** Now shows "Stephen is Parent of Matt" (reading correctly) rather than "child of Stephen" (confusing).
+
+### Fix 8: Delete person, remove relationships, fixed relationship direction default (v1.0.28)
+
+**Bug — mother recorded as child:** The `relationshipType` state defaulted to `'child'`, meaning if a user selected a person from the dropdown without changing the selector, the selected person was recorded as a child of the new person. Changed default to `'parent'` (most common case when adding ancestors). Also replaced the dropdown selector with pill buttons so the choice is explicit and visible.
+
+**New — delete person:** `MemoryStore.deletePerson()` removes the person, all their claims, and their endorsements. `AppContext.deletePerson()` additionally retracts all their graph relationships. A "Delete this person…" button appears at the bottom of the edit modal with a confirmation step before committing.
+
+**New — remove individual relationships:** The edit modal now shows each existing relationship with a ✕ button. Clicking it retracts both the forward and inverse edges from the graph store and persists immediately.
+
+**UX — relationship selector redesigned:** Replaced the ambiguous dropdown with pill buttons labelled by what the *other* person is to the subject ("Parent / Child / Spouse / Sibling / Grandparent / Grandchild"). A hint line reads "[Other] is the … of [subject]" and a confirmation line shows exactly what will be stored before saving.

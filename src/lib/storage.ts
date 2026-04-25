@@ -172,6 +172,22 @@ export class MemoryStore {
     this.persons.set(person.pubkey, person)
   }
 
+  deletePerson(pubkey: string): void {
+    this.persons.delete(pubkey)
+    // Remove all claims for this person
+    for (const [id, claim] of this.claims) {
+      if (claim.subjectPubkey === pubkey || claim.claimantPubkey === pubkey) {
+        this.claims.delete(id)
+      }
+    }
+    // Remove all endorsements touching this person's claims
+    for (const [id, endorsement] of this.endorsements) {
+      if (endorsement.endorserPubkey === pubkey) {
+        this.endorsements.delete(id)
+      }
+    }
+  }
+
   getPerson(pubkey: string): import('../types/chronicle').Person | undefined {
     return this.persons.get(pubkey)
   }
