@@ -12,6 +12,7 @@
 import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { store } from '../lib/storage'
+import { serialiseGraph } from '../lib/graph'
 import { useApp } from '../context/AppContext'
 import { buildFactClaim, buildRelationshipClaim } from '../lib/eventBuilder'
 import { addRelationship } from '../lib/graph'
@@ -97,7 +98,10 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onCancel 
   const allPersons = store.getAllPersons()
 
   const persistNow = useCallback(() => {
-    try { localStorage.setItem('chronicle:store', store.serialise()) } catch { /* silent */ }
+    try {
+      localStorage.setItem('chronicle:store', store.serialise())
+      localStorage.setItem('chronicle:graph', JSON.stringify(serialiseGraph()))
+    } catch { /* silent */ }
   }, [])
 
   const handleSave = useCallback(async () => {

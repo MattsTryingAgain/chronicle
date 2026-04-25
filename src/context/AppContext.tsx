@@ -33,6 +33,7 @@ import { TrustRevocationStore, type TrustRevocation } from '../lib/trustRevocati
 import { RelayTable } from '../lib/relayGossip'
 import { JoinRequestQueue, type JoinRequest } from '../lib/joinRequest'
 import { generateFamilyKey, encodeFamilyKey, admitMember } from '../lib/privacyTier'
+import { serialiseGraph, deserialiseGraph } from '../lib/graph'
 import { keyRecoveryStore } from '../lib/keyRecovery'
 import { mediaCache, type MediaCacheEntry } from '../lib/blossom'
 import type { KeyMaterial, ChronicleEvent } from '../types/chronicle'
@@ -268,6 +269,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setScreen('onboarding-unlock')
         }
       }
+      const savedGraph = localStorage.getItem('chronicle:graph')
+      if (savedGraph) {
+        deserialiseGraph(JSON.parse(savedGraph))
+      }
     } catch {
       // Fresh start
     }
@@ -276,6 +281,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const persistStore = useCallback(() => {
     try {
       localStorage.setItem('chronicle:store', store.serialise())
+      localStorage.setItem('chronicle:graph', JSON.stringify(serialiseGraph()))
     } catch { /* silent */ }
   }, [])
 
