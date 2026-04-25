@@ -41,13 +41,41 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 const gotLock = app.requestSingleInstanceLock()
 
 if (!gotLock) {
+  // Another instance is already running — quit immediately without creating any window
   app.quit()
 } else {
+  // We are the primary instance — set up second-instance handler and run normally
   app.on('second-instance', () => {
     if (global.mainWindow) {
       if (global.mainWindow.isMinimized()) global.mainWindow.restore()
       global.mainWindow.focus()
     }
+  })
+
+  // ─── App lifecycle (only runs in the primary instance) ──────────────────────
+
+  app.whenReady().then(() => {
+    initSqliteStore()
+    startRelay()
+    const win = createWindow()
+    setupAutoUpdater(win)
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+  })
+
+  app.on('window-all-closed', () => {
+    stopRelay()
+    if (process.platform !== 'darwin') app.quit()
+  })
+
+  app.on('before-quit', () => {
+    stopRelay()
+  })
+
+  app.on('will-quit', () => {
+    stopRelay()
   })
 }
 
@@ -271,28 +299,3 @@ function createWindow() {
   return mainWindow
 }
 
-// ─── App lifecycle ────────────────────────────────────────────────────────────
-
-app.whenReady().then(() => {
-  initSqliteStore()
-  startRelay()
-  const win = createWindow()
-  setupAutoUpdater(win)
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
-})
-
-app.on('window-all-closed', () => {
-  stopRelay()
-  if (process.platform !== 'darwin') app.quit()
-})
-
-app.on('before-quit', () => {
-  stopRelay()
-})
-
-app.on('will-quit', () => {
-  stopRelay()
-})
