@@ -17,6 +17,17 @@ const path = require('path')
 const { spawn } = require('child_process')
 const fs = require('fs')
 
+// ─── Suppress EPIPE errors from broken stdout/stderr pipes ───────────────────
+// These occur when a second instance quits immediately via the single-instance
+// lock and Node tries to write to the now-closed pipe.
+process.stdout.on('error', (err) => { if (err.code !== 'EPIPE') throw err })
+process.stderr.on('error', (err) => { if (err.code !== 'EPIPE') throw err })
+process.on('uncaughtException', (err) => {
+  if (err.code === 'EPIPE') return  // ignore broken pipe
+  // For any other uncaught error, show it (default Electron behaviour)
+  throw err
+})
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const RELAY_PORT = 4869
