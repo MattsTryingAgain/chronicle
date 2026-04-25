@@ -85,6 +85,7 @@ if (!gotLock) {
 // In dev mode we skip this to avoid spurious update checks.
 
 let autoUpdater = null
+let currentUpdateInfo = null  // { version } of available update, once found
 
 function setupAutoUpdater(win) {
   if (isDev) return
@@ -93,44 +94,59 @@ function setupAutoUpdater(win) {
     const { autoUpdater: au } = require('electron-updater')
     autoUpdater = au
 
-    // Silent background check — only notify, never auto-install without consent
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
 
-    autoUpdater.on('checking-for-update', () => {
-      console.log('[updater] Checking for update…')
-    })
+    const sendStatus = (type, payload = {}) => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('update-status', { type, ...payload })
+      }
+    }
 
+    autoUpdater.on('checking-for-update', () => {
+      console.log('[updater] Checking…')
+      sendStatus('checking')
+    })
     autoUpdater.on('update-available', (info) => {
       console.log('[updater] Update available:', info.version)
-      win.webContents.send('update-available', { version: info.version })
+      currentUpdateInfo = info
+      sendStatus('available', { newVersion: info.version, currentVersion: app.getVersion() })
     })
-
     autoUpdater.on('update-not-available', () => {
-      console.log('[updater] App is up to date.')
+      console.log('[updater] Up to date.')
+      sendStatus('up-to-date', { currentVersion: app.getVersion() })
     })
-
     autoUpdater.on('download-progress', (progress) => {
-      console.log(`[updater] Download: ${Math.round(progress.percent)}%`)
+      sendStatus('downloading', { percent: Math.round(progress.percent) })
     })
-
     autoUpdater.on('update-downloaded', (info) => {
-      console.log('[updater] Update downloaded:', info.version)
-      win.webContents.send('update-downloaded', { version: info.version })
+      console.log('[updater] Downloaded:', info.version)
+      sendStatus('ready', { newVersion: info.version, currentVersion: app.getVersion() })
     })
-
     autoUpdater.on('error', (err) => {
       console.error('[updater] Error:', err.message)
+      sendStatus('error', { message: err.message })
     })
 
-    // Check on startup, then every 4 hours
-    autoUpdater.checkForUpdatesAndNotify()
-    setInterval(() => autoUpdater.checkForUpdatesAndNotify(), 4 * 60 * 60 * 1000)
+    // No automatic check — user triggers from Settings
   } catch (e) {
-    // electron-updater not installed — skip silently in development
     console.warn('[updater] electron-updater not available:', e.message)
   }
 }
+
+// IPC: get current app version
+ipcMain.handle('get-version', () => app.getVersion())
+
+// IPC: manually trigger an update check from the renderer (Settings screen)
+ipcMain.handle('check-for-update', async () => {
+  if (!autoUpdater) return { error: 'Updater not available (development mode)' }
+  try {
+    await autoUpdater.checkForUpdates()
+    return { ok: true }
+  } catch (e) {
+    return { error: e.message }
+  }
+})
 
 // IPC: renderer can ask to install the downloaded update
 ipcMain.on('install-update', () => {

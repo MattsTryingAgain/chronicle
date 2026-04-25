@@ -26,4 +26,22 @@ contextBridge.exposeInMainWorld('chronicleElectron', {
   /** Persistent key-value store backed by userData files (survives app restarts) */
   storeGet: (key) => ipcRenderer.invoke('store-get', key),
   storeSet: (key, value) => ipcRenderer.invoke('store-set', key, value),
+
+  /** Manually trigger an update check */
+  checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
+
+  /** Install a downloaded update (quits and relaunches) */
+  installUpdate: () => ipcRenderer.send('install-update'),
+
+  /**
+   * Subscribe to update status events from main process.
+   * Callback receives: { type, currentVersion?, newVersion?, percent?, message? }
+   * type: 'checking' | 'available' | 'up-to-date' | 'downloading' | 'ready' | 'error'
+   * Returns an unsubscribe function.
+   */
+  onUpdateStatus: (callback) => {
+    const handler = (_event, data) => callback(data)
+    ipcRenderer.on('update-status', handler)
+    return () => ipcRenderer.removeListener('update-status', handler)
+  },
 })

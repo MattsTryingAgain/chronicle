@@ -3,12 +3,13 @@
  * Added: GEDCOM import, relay status display
  */
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { store, type RecoveryContact } from '../lib/storage'
 import { generateArchive, generateGedcom, downloadFile, type ExportablePerson } from '../lib/export'
 import { importGedcom } from '../lib/gedcomImport'
 import { useApp } from '../context/AppContext'
+import type { UpdateStatus } from '../lib/appStorage'
 import { FamilyKeyPanel } from './FamilyKeyPanel'
 import { KeyRecoveryModal } from './KeyRecoveryModal'
 
@@ -116,6 +117,7 @@ function RelayStatusSection() {
 function BroadcastControlsSection() {
   const { t } = useTranslation()
   const { broadcastSettings, updateBroadcastSettings, syncStatus } = useApp()
+
   const [sharedUrl, setSharedUrl] = useState(broadcastSettings.sharedRelayUrl)
   const [discoveryUrl, setDiscoveryUrl] = useState(broadcastSettings.discoveryRelayUrl)
   const [saved, setSaved] = useState(false)
@@ -249,6 +251,34 @@ export function SettingsView() {
   const [showAddContact, setShowAddContact] = useState(false)
   const [importResult, setImportResult] = useState<{ count: number; warnings: string[] } | null>(null)
   const [importError, setImportError] = useState('')
+
+  // ── Update checker state ─────────────────────────────────────────────────
+  const [appVersion, setAppVersion] = useState<string>('')
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
+
+  useEffect(() => {
+    if (window.chronicleElectron?.getVersion) {
+      window.chronicleElectron.getVersion().then(v => setAppVersion(v)).catch(() => {})
+    }
+    const unsub = window.chronicleElectron?.onUpdateStatus?.((status) => {
+      setUpdateStatus(status)
+      setCheckingUpdate(false)
+    })
+    return () => { unsub?.() }
+  }, [])
+
+  const handleCheckForUpdate = async () => {
+    if (!window.chronicleElectron?.checkForUpdate) return
+    setCheckingUpdate(true)
+    setUpdateStatus({ type: 'checking' })
+    await window.chronicleElectron.checkForUpdate()
+  }
+
+  const handleInstallUpdate = () => {
+    window.chronicleElectron?.installUpdate?.()
+  }
+
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [, forceUpdate] = useState(0)
   const refresh = useCallback(() => forceUpdate(n => n + 1), [])
@@ -469,6 +499,88 @@ export function SettingsView() {
           {t('recovery.title')}
         </button>
       </div>
+
+      {/* App Updates */}
+      {window.chronicleElectron?.isElectron && (
+        <div className="settings-section">
+          <h2 className="settings-section-title">App Updates</h2>
+          <div className="card" style={{ padding: 'var(--space-md) var(--space-lg)' }}>
+
+            {/* Current version */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-md)' }}>
+              <div>
+                <div style={{ fontWeight: 500, color: 'var(--navy)' }}>Chronicle</div>
+                <div style={{ fontSize: 13, color: 'var(--ink-muted)' }}>
+                  {appVersion ? <>Current version: <strong>v{appVersion}</strong></> : 'Loading version…'}
+                </div>
+              </div>
+              <button
+                className="btn btn-outline btn-sm"
+                onClick={handleCheckForUpdate}
+                disabled={checkingUpdate}
+                style={{ flexShrink: 0 }}
+              >
+                {checkingUpdate ? 'Checking…' : 'Check for updates'}
+              </button>
+            </div>
+
+            {/* Status display */}
+            {updateStatus && (() => {
+              const { type, currentVersion, newVersion, percent, message } = updateStatus
+              if (type === 'checking') return (
+                <div style={{ fontSize: 13, color: 'var(--ink-muted)' }}>
+                  🔍 Checking for updates…
+                </div>
+              )
+              if (type === 'up-to-date') return (
+                <div style={{ fontSize: 13, color: '#4caf78' }}>
+                  ✓ You're on the latest version{currentVersion ? ` (v${currentVersion})` : ''}.
+                </div>
+              )
+              if (type === 'available') return (
+                <div style={{ fontSize: 13, color: 'var(--gold)' }}>
+                  ⬇ Update available — downloading v{newVersion}…
+                  {currentVersion && <span style={{ color: 'var(--ink-muted)' }}> (you have v{currentVersion})</span>}
+                </div>
+              )
+              if (type === 'downloading') return (
+                <div style={{ fontSize: 13 }}>
+                  <div style={{ color: 'var(--ink-muted)', marginBottom: 6 }}>
+                    Downloading update… {percent ?? 0}%
+                  </div>
+                  <div style={{ background: 'var(--surface-raised)', borderRadius: 4, height: 6, overflow: 'hidden' }}>
+                    <div style={{ background: 'var(--gold)', height: '100%', width: `${percent ?? 0}%`, transition: 'width 0.3s ease' }} />
+                  </div>
+                </div>
+              )
+              if (type === 'ready') return (
+                <div>
+                  <div style={{ fontSize: 13, marginBottom: 10 }}>
+                    <span style={{ color: '#4caf78', fontWeight: 500 }}>✓ Ready to install</span>
+                    {currentVersion && newVersion && (
+                      <span style={{ color: 'var(--ink-muted)' }}>
+                        {' '}— v{currentVersion} → <strong style={{ color: 'var(--ink)' }}>v{newVersion}</strong>
+                      </span>
+                    )}
+                  </div>
+                  <button className="btn btn-primary btn-sm" onClick={handleInstallUpdate}>
+                    Restart and install v{newVersion}
+                  </button>
+                  <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 6 }}>
+                    Chronicle will close, update, and reopen automatically.
+                  </div>
+                </div>
+              )
+              if (type === 'error') return (
+                <div style={{ fontSize: 13, color: '#d06040' }}>
+                  ✕ Update check failed: {message ?? 'Unknown error'}
+                </div>
+              )
+              return null
+            })()}
+          </div>
+        </div>
+      )}
 
       {showAddContact && (
         <AddContactModal onSave={handleAddContact} onCancel={() => setShowAddContact(false)} />

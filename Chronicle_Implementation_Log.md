@@ -728,3 +728,11 @@ Comparable to Stage 4 in complexity. The platform abstraction layer is the most 
 **New — remove individual relationships:** The edit modal now shows each existing relationship with a ✕ button. Clicking it retracts both the forward and inverse edges from the graph store and persists immediately.
 
 **UX — relationship selector redesigned:** Replaced the ambiguous dropdown with pill buttons labelled by what the *other* person is to the subject ("Parent / Child / Spouse / Sibling / Grandparent / Grandchild"). A hint line reads "[Other] is the … of [subject]" and a confirmation line shows exactly what will be stored before saving.
+
+### Manual update checker in Settings (v1.0.30)
+
+**Changes:**
+- `electron/main.cjs` — removed automatic update check on startup and the 4-hour polling interval; added `get-version` and `check-for-update` IPC handlers; auto-updater now emits a single `update-status` event (type: `checking` | `available` | `up-to-date` | `downloading` | `ready` | `error`) with `currentVersion`, `newVersion`, `percent`, and `message` fields
+- `electron/preload.cjs` — exposed `getVersion()`, `checkForUpdate()`, `installUpdate()`, and `onUpdateStatus(callback)` (returns unsubscribe fn) via context bridge
+- `src/lib/appStorage.ts` — added `UpdateStatus` interface
+- `src/components/SettingsView.tsx` — new "App Updates" section at bottom of settings (only shown inside Electron); shows current version, "Check for updates" button, progress bar during download, and "Restart and install vX.Y.Z" button with clear from/to version display once ready
