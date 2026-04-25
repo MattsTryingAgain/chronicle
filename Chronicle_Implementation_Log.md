@@ -736,3 +736,13 @@ Comparable to Stage 4 in complexity. The platform abstraction layer is the most 
 - `electron/preload.cjs` — exposed `getVersion()`, `checkForUpdate()`, `installUpdate()`, and `onUpdateStatus(callback)` (returns unsubscribe fn) via context bridge
 - `src/lib/appStorage.ts` — added `UpdateStatus` interface
 - `src/components/SettingsView.tsx` — new "App Updates" section at bottom of settings (only shown inside Electron); shows current version, "Check for updates" button, progress bar during download, and "Restart and install vX.Y.Z" button with clear from/to version display once ready
+
+### Tree visualisation redesign (v1.0.31)
+
+- Background changed from dark (#080f1e) to cream (var(--cream)) matching the rest of the app
+- Node cards: white background with navy text and gold accents for root node; border-soft for others
+- Edges: gold connectors instead of blue/grey; spouse/sibling edges dashed gold
+- Removed dark overlay toolbar; replaced with a slim light toolbar matching app nav style
+- Tree fills the full viewport below the nav bar (app-shell max-width removed for graph tab; app-content overflow:hidden + flex layout)
+- Clicking a node opens a slide-in action panel on the right showing: name, dates, birthplace; action buttons for Edit information, View full profile, Photos & media (coming soon), Stories (coming soon), Documents (coming soon), Timeline (coming soon); "Make this person the tree root" at the bottom
+- onEditPerson prop added to FamilyTreeView; wired from App.tsx

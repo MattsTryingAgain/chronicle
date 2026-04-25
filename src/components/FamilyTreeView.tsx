@@ -1,16 +1,13 @@
 /**
- * FamilyTreeView — Generational family tree layout
+ * FamilyTreeView — generational family tree, app-themed
  *
- * Replaces the force-directed layout with a proper hierarchical layout:
- * - Generations assigned by BFS from root (parent = up, child = down, spouse = same row)
- * - Each generation rendered as a horizontal row
- * - Parent–child edges drawn as vertical connectors with horizontal brackets
- * - Spouse edges drawn as a short horizontal line between adjacent nodes
- * - Zoom + pan via D3
+ * - Cream/white background matching the rest of the app
+ * - Node cards styled with navy/gold palette
+ * - Clicking a node opens an action panel (stub buttons for future features)
+ * - Fills the full viewport below the nav bar
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { useTranslation } from 'react-i18next'
 import * as d3 from 'd3'
 import { store } from '../lib/storage'
 import { traverseGraph } from '../lib/graph'
@@ -35,15 +32,16 @@ interface NodeData {
 interface FamilyTreeViewProps {
   rootPubkey: string
   onSelectPerson?: (pubkey: string) => void
+  onEditPerson?: (pubkey: string) => void
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const NODE_W       = 180
-const NODE_H       = 64
-const H_GAP        = 32   // horizontal gap between nodes in same generation
-const V_GAP        = 100  // vertical gap between generations
-const CORNER_R     = 10   // radius on connector elbows
+const NODE_W   = 180
+const NODE_H   = 60
+const H_GAP    = 40
+const V_GAP    = 110
+const CORNER_R = 10
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -74,37 +72,14 @@ function buildNodeData(pubkey: string, generation: number): NodeData {
   }
 }
 
-/**
- * Assign a generation number to each node via BFS.
- *
- * Edge semantics: GraphEdge.relationship describes what fromPubkey IS TO toPubkey.
- * e.g. fromPubkey=Matt, toPubkey=Layla, relationship='parent' → Matt is parent of Layla
- *      → from Matt's perspective, Layla is gen+1 (descendant)
- *      → from Layla's perspective, Matt is gen-1 (ancestor)
- *
- * When traversing from `current`:
- *   - If current === fromPubkey: relationship describes current→neighbour
- *       parent/grandparent → neighbour is gen+1 (current is above)
- *       child/grandchild   → neighbour is gen-1 (current is below)
- *   - If current === toPubkey: relationship describes neighbour→current (inverse)
- *       parent/grandparent → neighbour is gen-1 (neighbour is above current)
- *       child/grandchild   → neighbour is gen+1 (neighbour is below current)
- */
-function assignGenerations(
-  rootPubkey: string,
-  nodes: string[],
-  edges: GraphEdge[],
-): Map<string, number> {
+function assignGenerations(rootPubkey: string, nodes: string[], edges: GraphEdge[]): Map<string, number> {
   const genMap = new Map<string, number>()
   genMap.set(rootPubkey, 0)
 
-  // Build direction-aware adjacency
   const adj = new Map<string, Array<{ neighbour: string; rel: string; asSubject: boolean }>>()
   for (const n of nodes) adj.set(n, [])
   for (const e of edges) {
-    // fromPubkey is subject of the relationship
     adj.get(e.fromPubkey)?.push({ neighbour: e.toPubkey, rel: e.relationship, asSubject: true })
-    // toPubkey is the object — sees inverse
     adj.get(e.toPubkey)?.push({ neighbour: e.fromPubkey, rel: e.relationship, asSubject: false })
   }
 
@@ -116,124 +91,251 @@ function assignGenerations(
       if (genMap.has(neighbour)) continue
       let delta = 0
       if (asSubject) {
-        // current IS rel TO neighbour
-        // e.g. current=parent of neighbour → neighbour is one gen below
-        if (rel === 'parent' || rel === 'grandparent') delta = 1   // neighbour is child/grandchild
-        else if (rel === 'child' || rel === 'grandchild') delta = -1 // neighbour is parent/grandparent
+        if (rel === 'parent' || rel === 'grandparent') delta = 1
+        else if (rel === 'child' || rel === 'grandchild') delta = -1
       } else {
-        // neighbour IS rel TO current (inverse perspective)
-        // e.g. neighbour=parent of current → neighbour is one gen above
-        if (rel === 'parent' || rel === 'grandparent') delta = -1  // neighbour is ancestor
-        else if (rel === 'child' || rel === 'grandchild') delta = 1  // neighbour is descendant
+        if (rel === 'parent' || rel === 'grandparent') delta = -1
+        else if (rel === 'child' || rel === 'grandchild') delta = 1
       }
-      // spouse, sibling → delta = 0
       genMap.set(neighbour, currentGen + delta)
       queue.push(neighbour)
     }
   }
-
-  // Any nodes unreached get generation 0
-  for (const n of nodes) {
-    if (!genMap.has(n)) genMap.set(n, 0)
-  }
-
+  for (const n of nodes) { if (!genMap.has(n)) genMap.set(n, 0) }
   return genMap
 }
 
-/**
- * Assign x/y positions. Groups nodes by generation, sorts within each
- * generation to minimise edge crossings (root-adjacent nodes centred),
- * then spaces evenly.
- */
-function computeLayout(
-  nodes: string[],
-  genMap: Map<string, number>,
-  rootPubkey: string,
-): Map<string, { x: number; y: number }> {
-  // Group by generation
+function computeLayout(nodes: string[], genMap: Map<string, number>, rootPubkey: string): Map<string, { x: number; y: number }> {
   const byGen = new Map<number, string[]>()
   for (const n of nodes) {
     const g = genMap.get(n) ?? 0
     if (!byGen.has(g)) byGen.set(g, [])
     byGen.get(g)!.push(n)
   }
-
-  // Shift generations so the minimum is 0
   const gens = Array.from(byGen.keys()).sort((a, b) => a - b)
   const minGen = gens[0] ?? 0
-
-  // Position root's generation at y=0; ancestors above, descendants below
   const posMap = new Map<string, { x: number; y: number }>()
-
   for (const gen of gens) {
-    const members = byGen.get(gen)!
-    // Put root first in its generation row
-    const sorted = [...members].sort((a, b) =>
-      a === rootPubkey ? -1 : b === rootPubkey ? 1 : 0
-    )
-    const totalWidth = sorted.length * (NODE_W + H_GAP) - H_GAP
+    const members = byGen.get(gen)!.sort((a, b) => a === rootPubkey ? -1 : b === rootPubkey ? 1 : 0)
+    const totalWidth = members.length * (NODE_W + H_GAP) - H_GAP
     const startX = -totalWidth / 2 + NODE_W / 2
-    const y = (gen - minGen) * (NODE_H + V_GAP)
-    sorted.forEach((pk, i) => {
-      posMap.set(pk, { x: startX + i * (NODE_W + H_GAP), y })
+    // gen increases: 0=root, +1=children, +2=grandchildren etc.
+    // ancestors assigned negative gen in assignGenerations, so they sort above root.
+    // yPos: minGen row at top, increases downward.
+    const yPos = (gen - minGen) * (NODE_H + V_GAP)
+    members.forEach((pk, i) => {
+      posMap.set(pk, { x: startX + i * (NODE_W + H_GAP), y: yPos })
     })
   }
-
   return posMap
 }
 
-function edgeStyle(edge: GraphEdge): { stroke: string; dash: string; width: number } {
-  if (edge.sensitive) return { stroke: '#8a8a8a', dash: '4,4', width: 1.5 }
-  if (edge.relationship === 'spouse') return { stroke: '#c9a96e', dash: '6,3', width: 1.5 }
-  if (!edge.acknowledged) return { stroke: '#7090b8', dash: '6,3', width: 1.5 }
-  return { stroke: '#c9a96e', dash: 'none', width: 2 }
+// ─── Action Panel ─────────────────────────────────────────────────────────────
+
+interface ActionPanelProps {
+  pubkey: string
+  onClose: () => void
+  onEdit: (pubkey: string) => void
+  onViewInList: (pubkey: string) => void
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+function ActionPanel({ pubkey, onClose, onEdit, onViewInList }: ActionPanelProps) {
+  const person = store.getPerson(pubkey)
+  if (!person) return null
 
-export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTreeViewProps) {
-  const { t } = useTranslation()
+  const initials = person.displayName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+  const claims = store.getClaimsForPerson(pubkey)
+  const endorsements = store.getAllEndorsements()
+  const resolutions = resolveAllFields(claims, endorsements)
+  const born = resolutions.find(r => r.field === 'born')?.winningClaim?.value
+  const died = resolutions.find(r => r.field === 'died')?.winningClaim?.value
+  const place = resolutions.find(r => r.field === 'birthplace')?.winningClaim?.value
+
+  return (
+    <div style={{
+      position: 'absolute',
+      top: 0, right: 0,
+      width: 280,
+      height: '100%',
+      background: '#fff',
+      borderLeft: '1px solid var(--border-soft)',
+      boxShadow: '-4px 0 24px rgba(15,30,53,0.08)',
+      display: 'flex',
+      flexDirection: 'column',
+      zIndex: 10,
+    }}>
+      {/* Header */}
+      <div style={{
+        padding: '20px 20px 16px',
+        borderBottom: '1px solid var(--border-soft)',
+        background: 'var(--cream)',
+      }}>
+        <button
+          onClick={onClose}
+          style={{
+            position: 'absolute', top: 12, right: 12,
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--ink-muted)', fontSize: 18, lineHeight: 1, padding: 4,
+          }}
+        >✕</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{
+            width: 48, height: 48, borderRadius: '50%',
+            background: 'var(--navy)', color: 'var(--gold)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700,
+            flexShrink: 0,
+          }}>
+            {initials}
+          </div>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 16, color: 'var(--navy)', fontFamily: 'var(--font-display)' }}>
+              {person.displayName}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 2 }}>
+              {person.isLiving ? 'Living' : 'Ancestor'}
+              {born && ` · b. ${born}`}
+              {died && ` · d. ${died}`}
+            </div>
+            {place && (
+              <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>{place}</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Action buttons */}
+      <div style={{ padding: '16px 16px', display: 'flex', flexDirection: 'column', gap: 8, flex: 1, overflowY: 'auto' }}>
+
+        <ActionButton
+          icon="✏️"
+          label="Edit information"
+          description="Update facts, dates and relationships"
+          onClick={() => onEdit(pubkey)}
+        />
+
+        <ActionButton
+          icon="📋"
+          label="View full profile"
+          description="See all claims and conflict history"
+          onClick={() => onViewInList(pubkey)}
+        />
+
+        <div style={{ borderTop: '1px solid var(--border-soft)', margin: '4px 0' }} />
+
+        <ActionButton
+          icon="🖼"
+          label="Photos & media"
+          description="View and add photos for this person"
+          onClick={() => {}}
+          comingSoon
+        />
+
+        <ActionButton
+          icon="📖"
+          label="Stories"
+          description="Personal stories and memories"
+          onClick={() => {}}
+          comingSoon
+        />
+
+        <ActionButton
+          icon="📄"
+          label="Documents"
+          description="Birth certificates, records and sources"
+          onClick={() => {}}
+          comingSoon
+        />
+
+        <ActionButton
+          icon="🌍"
+          label="Timeline"
+          description="Life events on a timeline"
+          onClick={() => {}}
+          comingSoon
+        />
+      </div>
+
+      {/* Focus tree on this person */}
+      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-soft)' }}>
+        <button
+          className="btn btn-outline btn-sm"
+          style={{ width: '100%', justifyContent: 'center' }}
+          onClick={() => { onViewInList(pubkey); onClose() }}
+        >
+          Make this person the tree root
+        </button>
+      </div>
+    </div>
+  )
+}
+
+interface ActionButtonProps {
+  icon: string
+  label: string
+  description: string
+  onClick: () => void
+  comingSoon?: boolean
+}
+
+function ActionButton({ icon, label, description, onClick, comingSoon }: ActionButtonProps) {
+  return (
+    <button
+      onClick={comingSoon ? undefined : onClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: '10px 12px',
+        background: comingSoon ? 'transparent' : 'var(--cream)',
+        border: '1px solid var(--border-soft)',
+        borderRadius: 8, cursor: comingSoon ? 'default' : 'pointer',
+        textAlign: 'left', width: '100%',
+        opacity: comingSoon ? 0.5 : 1,
+        transition: 'background 0.15s',
+      }}
+      onMouseEnter={e => { if (!comingSoon) (e.currentTarget as HTMLElement).style.background = 'var(--cream-mid)' }}
+      onMouseLeave={e => { if (!comingSoon) (e.currentTarget as HTMLElement).style.background = 'var(--cream)' }}
+    >
+      <span style={{ fontSize: 20, width: 28, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--navy)' }}>
+          {label}
+          {comingSoon && <span style={{ fontSize: 10, color: 'var(--ink-muted)', marginLeft: 6, fontWeight: 400 }}>coming soon</span>}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 1 }}>{description}</div>
+      </div>
+      {!comingSoon && <span style={{ color: 'var(--ink-muted)', fontSize: 12 }}>›</span>}
+    </button>
+  )
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
+export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerson }: FamilyTreeViewProps) {
   const svgRef = useRef<SVGSVGElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   const [truncated, setTruncated] = useState(false)
   const [nodeCount, setNodeCount] = useState(0)
   const [selectedPubkey, setSelectedPubkey] = useState<string | null>(null)
 
+  const handleClosePanel = useCallback(() => setSelectedPubkey(null), [])
+
   const draw = useCallback(() => {
-    if (!svgRef.current) return
+    if (!svgRef.current || !containerRef.current) return
     const svg = d3.select(svgRef.current)
     svg.selectAll('*').remove()
 
-    const { nodes, edges, truncated: trunc } = traverseGraph(rootPubkey, {
-      maxDepth: 6,
-      maxNodes: 150,
-    })
+    const { nodes, edges, truncated: trunc } = traverseGraph(rootPubkey, { maxDepth: 6, maxNodes: 150 })
     setTruncated(trunc)
     setNodeCount(nodes.length)
     if (nodes.length === 0) return
 
-    const container = svgRef.current.parentElement
-    const width  = container?.clientWidth  || 900
-    const height = container?.clientHeight || 600
+    const width  = containerRef.current.clientWidth
+    const height = containerRef.current.clientHeight
 
     svg.attr('width', width).attr('height', height)
 
-    // Defs: arrowheads
-    const defs = svg.append('defs')
-    ;[
-      { id: 'arr-gold', color: '#c9a96e' },
-      { id: 'arr-blue', color: '#7090b8' },
-    ].forEach(({ id, color }) => {
-      defs.append('marker')
-        .attr('id', id).attr('viewBox', '0 -5 10 10')
-        .attr('refX', NODE_W / 2 + 8).attr('refY', 0)
-        .attr('markerWidth', 6).attr('markerHeight', 6)
-        .attr('orient', 'auto')
-        .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', color)
-    })
-
     const g = svg.append('g')
 
-    // Zoom + pan
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.15, 3])
       .on('zoom', event => g.attr('transform', event.transform))
@@ -243,81 +345,72 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
     const genMap = assignGenerations(rootPubkey, nodes, edges)
     const posMap = computeLayout(nodes, genMap, rootPubkey)
 
-    // Build node data
     const nodeDataMap = new Map<string, NodeData>()
     for (const pk of nodes) {
       const nd = buildNodeData(pk, genMap.get(pk) ?? 0)
       const pos = posMap.get(pk) ?? { x: 0, y: 0 }
-      nd.x = pos.x
-      nd.y = pos.y
+      nd.x = pos.x; nd.y = pos.y
       nodeDataMap.set(pk, nd)
     }
 
-    // ── Draw edges ────────────────────────────────────────────────────────────
-    const edgeGroup = g.append('g').attr('class', 'edges')
+    // ── Edges ─────────────────────────────────────────────────────────────────
+    const edgeGroup = g.append('g')
 
     for (const edge of edges) {
       const from = nodeDataMap.get(edge.fromPubkey)
       const to   = nodeDataMap.get(edge.toPubkey)
       if (!from || !to) continue
 
-      const style = edgeStyle(edge)
-      const isSpouse = edge.relationship === 'spouse' || edge.relationship === 'sibling'
+      const isSpouseOrSibling = edge.relationship === 'spouse' || edge.relationship === 'sibling'
+      const stroke = edge.sensitive ? '#c5b89a' : '#c9a96e'
+      const dash   = edge.sensitive ? '4,4' : isSpouseOrSibling ? '6,3' : 'none'
+      const width  = 1.5
 
-      if (isSpouse) {
-        // Simple horizontal line between same-generation nodes
+      if (isSpouseOrSibling) {
         const x1 = from.x + (from.x < to.x ? NODE_W / 2 : -NODE_W / 2)
         const x2 = to.x   + (from.x < to.x ? -NODE_W / 2 : NODE_W / 2)
-        const y  = (from.y + to.y) / 2 + NODE_H / 2 - 8
+        const y  = (from.y + to.y) / 2
         edgeGroup.append('line')
-          .attr('x1', x1).attr('y1', y)
-          .attr('x2', x2).attr('y2', y)
-          .attr('stroke', style.stroke)
-          .attr('stroke-dasharray', style.dash)
-          .attr('stroke-width', style.width)
-          .attr('opacity', 0.7)
+          .attr('x1', x1).attr('y1', y).attr('x2', x2).attr('y2', y)
+          .attr('stroke', stroke).attr('stroke-dasharray', dash).attr('stroke-width', width)
+          .attr('opacity', 0.6)
       } else {
-        // Vertical connector with elbow: parent bottom-center → child top-center
-        const fromBelow = from.y < to.y  // from is ancestor
-        const x1 = from.x
-        const y1 = from.y + (fromBelow ? NODE_H / 2 : -NODE_H / 2)
-        const x2 = to.x
-        const y2 = to.y   + (fromBelow ? -NODE_H / 2 : NODE_H / 2)
+        const fromBelow = from.y < to.y
+        const x1 = from.x, y1 = from.y + (fromBelow ? NODE_H / 2 : -NODE_H / 2)
+        const x2 = to.x,   y2 = to.y   + (fromBelow ? -NODE_H / 2 : NODE_H / 2)
         const midY = (y1 + y2) / 2
 
         if (Math.abs(x1 - x2) < 4) {
-          // Straight vertical
           edgeGroup.append('line')
-            .attr('x1', x1).attr('y1', y1)
-            .attr('x2', x2).attr('y2', y2)
-            .attr('stroke', style.stroke)
-            .attr('stroke-dasharray', style.dash)
-            .attr('stroke-width', style.width)
+            .attr('x1', x1).attr('y1', y1).attr('x2', x2).attr('y2', y2)
+            .attr('stroke', stroke).attr('stroke-dasharray', dash).attr('stroke-width', width)
         } else {
-          // Elbow path
-          const r = Math.min(CORNER_R, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2)
           const dx = x2 > x1 ? 1 : -1
           const dy = fromBelow ? 1 : -1
-          const path = [
-            `M ${x1} ${y1}`,
-            `L ${x1} ${midY - dy * r}`,
-            `Q ${x1} ${midY} ${x1 + dx * r} ${midY}`,
-            `L ${x2 - dx * r} ${midY}`,
-            `Q ${x2} ${midY} ${x2} ${midY + dy * r}`,
-            `L ${x2} ${y2}`,
-          ].join(' ')
+          const r  = Math.min(CORNER_R, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2)
           edgeGroup.append('path')
-            .attr('d', path)
+            .attr('d', [
+              `M ${x1} ${y1}`,
+              `L ${x1} ${midY - dy * r}`,
+              `Q ${x1} ${midY} ${x1 + dx * r} ${midY}`,
+              `L ${x2 - dx * r} ${midY}`,
+              `Q ${x2} ${midY} ${x2} ${midY + dy * r}`,
+              `L ${x2} ${y2}`,
+            ].join(' '))
             .attr('fill', 'none')
-            .attr('stroke', style.stroke)
-            .attr('stroke-dasharray', style.dash)
-            .attr('stroke-width', style.width)
+            .attr('stroke', stroke).attr('stroke-dasharray', dash).attr('stroke-width', width)
         }
       }
     }
 
-    // ── Draw nodes ────────────────────────────────────────────────────────────
-    const nodeGroup = g.append('g').attr('class', 'nodes')
+    // ── Nodes ─────────────────────────────────────────────────────────────────
+    const nodeGroup = g.append('g')
+
+    const defs = svg.append('defs')
+    defs.append('filter').attr('id', 'node-shadow')
+      .append('feDropShadow')
+      .attr('dx', 0).attr('dy', 1).attr('stdDeviation', 3)
+      .attr('flood-color', 'rgba(15,30,53,0.12)')
 
     const nodeElems = nodeGroup.selectAll<SVGGElement, NodeData>('g.tree-node')
       .data(Array.from(nodeDataMap.values()), d => d.pubkey)
@@ -326,103 +419,77 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
       .attr('transform', d => `translate(${d.x},${d.y})`)
       .style('cursor', 'pointer')
       .on('click', (_event, d) => {
-        setSelectedPubkey(d.pubkey)
-        onSelectPerson?.(d.pubkey)
-        draw()
+        setSelectedPubkey(prev => prev === d.pubkey ? null : d.pubkey)
       })
 
-    // Drop shadow
-    defs.append('filter').attr('id', 'shadow')
-      .append('feDropShadow')
-      .attr('dx', 0).attr('dy', 2)
-      .attr('stdDeviation', 4)
-      .attr('flood-color', 'rgba(0,0,0,0.5)')
-
-    // Card background
+    // Card
     nodeElems.append('rect')
       .attr('x', -NODE_W / 2).attr('y', -NODE_H / 2)
       .attr('width', NODE_W).attr('height', NODE_H)
       .attr('rx', 10)
-      .attr('filter', 'url(#shadow)')
-      .attr('fill', d => {
-        if (d.pubkey === rootPubkey) return '#1e3060'
-        if (d.pubkey === selectedPubkey) return '#1a2a50'
-        return '#101e3a'
-      })
+      .attr('filter', 'url(#node-shadow)')
+      .attr('fill', d => d.pubkey === rootPubkey ? 'var(--navy)' : '#ffffff')
       .attr('stroke', d => {
-        if (d.hasConflict) return '#d06040'
-        if (d.pubkey === rootPubkey) return '#c9a96e'
-        if (d.pubkey === selectedPubkey) return '#8ca6c8'
-        return '#263354'
+        if (d.pubkey === selectedPubkey) return 'var(--gold)'
+        if (d.hasConflict) return '#c0392b'
+        if (d.pubkey === rootPubkey) return 'var(--gold)'
+        return 'var(--border-soft)'
       })
-      .attr('stroke-width', d => (d.pubkey === rootPubkey || d.pubkey === selectedPubkey) ? 2 : 1)
+      .attr('stroke-width', d => (d.pubkey === selectedPubkey || d.pubkey === rootPubkey) ? 2 : 1)
 
-    // Living indicator
+    // Living dot
     nodeElems.filter(d => d.isLiving)
       .append('circle')
       .attr('cx', NODE_W / 2 - 10).attr('cy', -NODE_H / 2 + 10)
-      .attr('r', 4).attr('fill', '#4caf78')
+      .attr('r', 3.5)
+      .attr('fill', '#4caf78')
 
-    // Conflict indicator
+    // Conflict dot
     nodeElems.filter(d => d.hasConflict)
       .append('text')
       .attr('x', -NODE_W / 2 + 8).attr('y', -NODE_H / 2 + 14)
-      .attr('font-size', 11).attr('fill', '#d06040').text('⚠')
+      .attr('font-size', 10).attr('fill', '#c0392b').text('⚠')
 
     // Name
     nodeElems.append('text')
-      .attr('y', -8)
+      .attr('y', -6)
       .attr('text-anchor', 'middle')
-      .attr('font-size', 14)
+      .attr('font-size', 13)
       .attr('font-family', 'Lora, Georgia, serif')
-      .attr('fill', d => d.pubkey === rootPubkey ? '#c9a96e' : '#e8e0d0')
-      .attr('font-weight', d => d.pubkey === rootPubkey ? 'bold' : 'normal')
+      .attr('font-weight', '600')
+      .attr('fill', d => d.pubkey === rootPubkey ? 'var(--gold-light)' : 'var(--navy)')
       .text(d => d.displayName.length > 22 ? d.displayName.slice(0, 20) + '…' : d.displayName)
 
     // Dates
     nodeElems.append('text')
-      .attr('y', 14)
+      .attr('y', 13)
       .attr('text-anchor', 'middle')
-      .attr('font-size', 11)
-      .attr('fill', '#7090b0')
+      .attr('font-size', 10.5)
+      .attr('fill', d => d.pubkey === rootPubkey ? 'rgba(201,169,110,0.8)' : 'var(--ink-muted)')
       .text(d => {
         if (d.birthYear && d.deathYear) return `${d.birthYear} – ${d.deathYear}`
         if (d.birthYear) return `b. ${d.birthYear}`
         return ''
       })
 
-    // Generation label (faint, for orientation)
-    const gens = Array.from(new Set(Array.from(genMap.values()))).sort((a, b) => a - b)
-    const minGen = gens[0] ?? 0
-    for (const gen of gens) {
-      const yPos = (gen - minGen) * (NODE_H + V_GAP)
-      g.append('text')
-        .attr('x', -width / 2 + 8)
-        .attr('y', yPos + 4)
-        .attr('font-size', 10)
-        .attr('fill', '#2a3a5a')
-        .attr('font-family', 'sans-serif')
-        .text(gen < 0 ? `Gen ${gen}` : gen === 0 ? 'You' : `Gen +${gen}`)
-    }
-
-    // ── Initial zoom to fit ────────────────────────────────────────────────────
+    // ── Auto-fit ──────────────────────────────────────────────────────────────
     const allPos = Array.from(posMap.values())
     if (allPos.length > 0) {
       const xs = allPos.map(p => p.x)
       const ys = allPos.map(p => p.y)
-      const minX = Math.min(...xs) - NODE_W / 2 - 32
-      const maxX = Math.max(...xs) + NODE_W / 2 + 32
-      const minY = Math.min(...ys) - NODE_H / 2 - 32
-      const maxY = Math.max(...ys) + NODE_H / 2 + 32
-      const contentW = maxX - minX
-      const contentH = maxY - minY
-      const scale = Math.min(0.95, Math.min(width / contentW, height / contentH))
-      const tx = width / 2  - scale * (minX + contentW / 2)
-      const ty = height / 2 - scale * (minY + contentH / 2)
-      svg.call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale))
+      const pad = 48
+      const minX = Math.min(...xs) - NODE_W / 2 - pad
+      const maxX = Math.max(...xs) + NODE_W / 2 + pad
+      const minY = Math.min(...ys) - NODE_H / 2 - pad
+      const maxY = Math.max(...ys) + NODE_H / 2 + pad
+      const cw = maxX - minX, ch = maxY - minY
+      const scale = Math.min(0.95, width / cw, height / ch)
+      svg.call(zoom.transform, d3.zoomIdentity
+        .translate(width / 2 - scale * (minX + cw / 2), height / 2 - scale * (minY + ch / 2))
+        .scale(scale))
     }
 
-  }, [rootPubkey, selectedPubkey, onSelectPerson])
+  }, [rootPubkey, selectedPubkey])
 
   useEffect(() => { draw() }, [draw])
 
@@ -433,54 +500,60 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
   }, [draw])
 
   return (
-    <div className="family-tree-view d-flex flex-column h-100">
+    <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+
       {/* Toolbar */}
-      <div className="d-flex align-items-center gap-3 px-3 py-2 border-bottom border-secondary">
-        <span className="text-muted small">
-          {nodeCount} {nodeCount === 1 ? 'person' : 'people'} shown
-        </span>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 16,
+        padding: '8px 16px',
+        borderBottom: '1px solid var(--border-soft)',
+        background: '#fff',
+        fontSize: 13,
+        color: 'var(--ink-muted)',
+        flexShrink: 0,
+      }}>
+        <span>{nodeCount} {nodeCount === 1 ? 'person' : 'people'}</span>
         {truncated && (
-          <span className="badge text-bg-warning">
-            {t('tree.truncated', { defaultValue: 'Tree truncated — zoom out to see more' })}
+          <span style={{ color: 'var(--gold)', fontWeight: 500 }}>
+            ⚠ Tree truncated — zoom out to see more
           </span>
         )}
-        <div className="ms-auto d-flex gap-3 align-items-center small text-muted">
-          <span>
-            <svg width="24" height="8">
-              <line x1="0" y1="4" x2="24" y2="4" stroke="#c9a96e" strokeWidth="2" />
-            </svg>
-            {' '}Confirmed
-          </span>
-          <span>
-            <svg width="24" height="8">
-              <line x1="0" y1="4" x2="24" y2="4" stroke="#7090b8" strokeWidth="1.5" strokeDasharray="6,3" />
-            </svg>
-            {' '}Unconfirmed
-          </span>
-          <span>
-            <svg width="24" height="8">
-              <line x1="0" y1="4" x2="24" y2="4" stroke="#8a8a8a" strokeWidth="1.5" strokeDasharray="4,4" />
-            </svg>
-            {' '}Sensitive
-          </span>
-          <span>
-            <svg width="24" height="8">
-              <line x1="0" y1="4" x2="24" y2="4" stroke="#c9a96e" strokeWidth="1.5" strokeDasharray="6,3" />
-            </svg>
-            {' '}Spouse
-          </span>
-          <span style={{ color: '#d06040' }}>⚠</span>
-          {' '}Conflict
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 16, alignItems: 'center' }}>
+          <LegendItem color="var(--gold)" dash="none" label="Confirmed" />
+          <LegendItem color="var(--gold)" dash="6,3" label="Spouse / sibling" />
+          <LegendItem color="#c5b89a" dash="4,4" label="Sensitive" />
         </div>
+        <span style={{ color: 'var(--border)', marginLeft: 8, fontSize: 11 }}>
+          Scroll to zoom · Drag to pan · Click to select
+        </span>
       </div>
 
-      {/* Canvas */}
-      <div className="flex-grow-1 position-relative overflow-hidden" style={{ background: '#080f1e' }}>
+      {/* Canvas + panel */}
+      <div ref={containerRef} style={{ flex: 1, position: 'relative', overflow: 'hidden', background: 'var(--cream)' }}>
         <svg ref={svgRef} style={{ width: '100%', height: '100%' }} />
-        <div className="position-absolute bottom-0 end-0 p-2 text-muted" style={{ fontSize: '0.7rem' }}>
-          Scroll to zoom · Drag to pan · Click a node to view profile
-        </div>
+
+        {selectedPubkey && (
+          <ActionPanel
+            pubkey={selectedPubkey}
+            onClose={handleClosePanel}
+            onEdit={(pk) => { onEditPerson?.(pk); handleClosePanel() }}
+            onViewInList={(pk) => { onSelectPerson?.(pk) }}
+          />
+        )}
       </div>
     </div>
+  )
+}
+
+function LegendItem({ color, dash, label }: { color: string; dash: string; label: string }) {
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <svg width="24" height="8">
+        <line x1="0" y1="4" x2="24" y2="4"
+          stroke={color} strokeWidth="1.5"
+          strokeDasharray={dash === 'none' ? undefined : dash} />
+      </svg>
+      {label}
+    </span>
   )
 }
