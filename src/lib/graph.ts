@@ -53,6 +53,7 @@ export interface GraphEdge {
   subtype?: SensitiveRelationshipSubtype
   acknowledged: boolean
   claimEventId: string
+  meta?: import('../types/chronicle').RelationshipMeta
 }
 
 export interface TraversalResult {
@@ -255,6 +256,7 @@ export function traverseGraph(rootPubkey: string, options: TraversalOptions = {}
           subtype: rel.subtype,
           acknowledged: _isAcknowledged(rel.eventId),
           claimEventId: rel.eventId,
+          meta: rel.meta,
         })
       }
       if (!visited.has(neighbour)) {

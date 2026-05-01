@@ -361,18 +361,29 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
       const to   = nodeDataMap.get(edge.toPubkey)
       if (!from || !to) continue
 
-      const isSpouseOrSibling = edge.relationship === 'spouse' || edge.relationship === 'sibling'
+      // Siblings are implied by shared parents — don't draw a direct link
+      if (edge.relationship === 'sibling') continue
+
+      const isSpouse = edge.relationship === 'spouse'
       const stroke = edge.sensitive ? '#c5b89a' : '#c9a96e'
-      const dash   = edge.sensitive ? '4,4' : isSpouseOrSibling ? '6,3' : 'none'
+
+      // Spouse line: solid if married, dashed for all other statuses (divorced, unmarried, unknown, etc.)
+      let dash: string
+      if (isSpouse) {
+        const status = edge.meta?.status
+        dash = (status === 'married') ? 'none' : '6,3'
+      } else {
+        dash = edge.sensitive ? '4,4' : 'none'
+      }
       const width  = 1.5
 
-      if (isSpouseOrSibling) {
+      if (isSpouse) {
         const x1 = from.x + (from.x < to.x ? NODE_W / 2 : -NODE_W / 2)
         const x2 = to.x   + (from.x < to.x ? -NODE_W / 2 : NODE_W / 2)
         const y  = (from.y + to.y) / 2
         edgeGroup.append('line')
           .attr('x1', x1).attr('y1', y).attr('x2', x2).attr('y2', y)
-          .attr('stroke', stroke).attr('stroke-dasharray', dash).attr('stroke-width', width)
+          .attr('stroke', stroke).attr('stroke-dasharray', dash === 'none' ? null : dash).attr('stroke-width', width)
           .attr('opacity', 0.6)
       } else {
         const fromBelow = from.y < to.y
@@ -519,8 +530,8 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
           </span>
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 16, alignItems: 'center' }}>
-          <LegendItem color="var(--gold)" dash="none" label="Confirmed" />
-          <LegendItem color="var(--gold)" dash="6,3" label="Spouse / sibling" />
+          <LegendItem color="var(--gold)" dash="none" label="Married" />
+          <LegendItem color="var(--gold)" dash="6,3" label="Partner / divorced" />
           <LegendItem color="#c5b89a" dash="4,4" label="Sensitive" />
         </div>
         <span style={{ color: 'var(--border)', marginLeft: 8, fontSize: 11 }}>

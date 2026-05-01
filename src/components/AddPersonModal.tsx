@@ -74,7 +74,7 @@ function SpouseMeta({ meta, onChange }: { meta: RelationshipMeta; onChange: (m: 
       <div style={{ display: 'flex', gap: 8 }}>
         <div style={{ flex: 1 }}>
           <label style={{ fontSize: 12, color: 'var(--ink-muted)', display: 'block', marginBottom: 3 }}>
-            Relationship start
+            Start date (marriage or relationship began)
           </label>
           <input className="form-control form-control-sm"
             placeholder="e.g. 1985 or June 1985"
@@ -83,7 +83,7 @@ function SpouseMeta({ meta, onChange }: { meta: RelationshipMeta; onChange: (m: 
         </div>
         <div style={{ flex: 1 }}>
           <label style={{ fontSize: 12, color: 'var(--ink-muted)', display: 'block', marginBottom: 3 }}>
-            Relationship end
+            End date (divorce, separation, or death)
           </label>
           <input className="form-control form-control-sm"
             placeholder="leave blank if ongoing"
