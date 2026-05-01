@@ -755,3 +755,30 @@ Comparable to Stage 4 in complexity. The platform abstraction layer is the most 
 - `package.json` build config: added `directories.output = "release"` — electron-builder now writes installers and `latest.yml` to `release/` rather than `dist/`
 - `.github/workflows/release.yml`: updated all artifact upload paths from `dist/*` to `release/*`; split Vite build and electron-builder into separate named steps; added a `List release output` step per platform to make future debugging easy; updated yml filenames to `latest.yml` (Windows), `latest-mac.yml` (Mac), `latest-linux.yml` (Linux)
 - The `release` job already correctly uses `softprops/action-gh-release` to attach all artifacts — no change needed there
+
+### Simplified relationships, metadata, improved cards (v1.0.33)
+
+**Relationship types simplified:**
+- Removed `grandparent` and `grandchild` from `RelationshipType` — these are redundant since grandparent relationships emerge naturally from two parent hops in the graph
+- Only `parent | child | spouse | sibling` remain
+- Updated `relaySync.ts` validation list to match
+
+**Relationship metadata (`RelationshipMeta` in `chronicle.ts`):**
+- `startDate` / `endDate` — free text date for relationship start/end
+- `status` — `married | unmarried | separated | divorced | widowed`
+- `childrenFromYear` / `childrenToYear` — date range in which children from this couple were born
+- `adopted` — boolean flag on parent/child edges
+- Stored as optional `meta` field on `RelationshipClaim` in `graph.ts`
+- UI shows spouse metadata form (status pills, date fields, children range) and parent/child adopted checkbox in `AddPersonModal`
+
+**ProfileCard improvements:**
+- New `RelationshipsSection` below the fact fields: shows all relationships grouped (spouse first, then parents, children, siblings), with metadata displayed inline
+- Relies on `getRelationshipsFor` filtered to subject-only edges
+
+**PersonListItem improvements:**
+- Now shows birthplace alongside dates (`b. 1979 · Portsmouth`)
+- Uses highest-confidence claim for each field
+
+**Notes for next session:**
+- Ancestor keypairs deliberately dropped — to be revisited with social recovery model
+- Existing stored relationships have no `meta` — will display without metadata, which is fine

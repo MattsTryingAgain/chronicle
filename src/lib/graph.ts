@@ -22,6 +22,7 @@ export interface RelationshipClaim {
   relationship: RelationshipType
   sensitive: boolean
   subtype?: SensitiveRelationshipSubtype
+  meta?: import('../types/chronicle').RelationshipMeta
   relay?: string
   createdAt: number
   retracted: boolean

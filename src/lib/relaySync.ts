@@ -244,7 +244,7 @@ function ingestRetraction(event: ChronicleEvent): void {
 }
 
 const KNOWN_RELATIONSHIP_TYPES: RelationshipType[] = [
-  'parent', 'child', 'spouse', 'sibling', 'grandparent', 'grandchild',
+  'parent', 'child', 'spouse', 'sibling',
 ]
 const KNOWN_SUBTYPES: SensitiveRelationshipSubtype[] = [
   'adopted', 'non-paternity', 'unknown-parent', 'given-up',

@@ -7,7 +7,9 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { resolveAllFields } from '../lib/confidence'
+import { getRelationshipsFor } from '../lib/graph'
 import type { Person, FactClaim, Endorsement, ConflictState, FactField } from '../types/chronicle'
+import { store } from '../lib/storage'
 
 interface ProfileCardProps {
   person: Person
@@ -91,6 +93,63 @@ function ClaimsPanel({
 // ─── Individual fact row ───────────────────────────────────────────────────────
 
 const FIELD_LABELS: FactField[] = ['born', 'died', 'birthplace', 'deathplace', 'occupation', 'bio']
+
+// ─── Relationships section ────────────────────────────────────────────────────
+
+function relTypeLabel(rel: string): string {
+  const labels: Record<string, string> = {
+    parent: 'Parent', child: 'Child', spouse: 'Partner / Spouse', sibling: 'Sibling',
+  }
+  return labels[rel] ?? rel
+}
+
+function RelationshipsSection({ pubkey }: { pubkey: string }) {
+  const rels = getRelationshipsFor(pubkey)
+    .filter(r => r.subjectPubkey === pubkey && !r.retracted)
+
+  if (rels.length === 0) return null
+
+  // Group: partners first, then parents, then children, then siblings
+  const order = ['spouse', 'parent', 'child', 'sibling']
+  const sorted = [...rels].sort((a, b) => order.indexOf(a.relationship) - order.indexOf(b.relationship))
+
+  return (
+    <div className="profile-card-body" style={{ borderTop: '1px solid var(--border-soft)' }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-muted)', letterSpacing: '0.06em',
+        textTransform: 'uppercase', marginBottom: 'var(--space-sm)' }}>
+        Relationships
+      </div>
+      {sorted.map(rel => {
+        const other = store.getPerson(rel.relatedPubkey)
+        const meta = rel.meta
+        return (
+          <div key={rel.eventId} style={{ marginBottom: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--navy)' }}>
+                {other?.displayName ?? rel.relatedPubkey.slice(0, 16) + '…'}
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+                {relTypeLabel(rel.relationship)}
+                {rel.subtype && ` (${rel.subtype})`}
+              </span>
+            </div>
+            {meta && (
+              <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 2, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {meta.status && <span style={{ textTransform: 'capitalize' }}>{meta.status}</span>}
+                {meta.startDate && <span>from {meta.startDate}</span>}
+                {meta.endDate && <span>to {meta.endDate}</span>}
+                {meta.adopted && <span>· Adopted</span>}
+                {(meta.childrenFromYear || meta.childrenToYear) && (
+                  <span>· Children: {meta.childrenFromYear ?? '?'}{meta.childrenToYear ? `–${meta.childrenToYear}` : '+'}</span>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 // ─── ProfileCard ──────────────────────────────────────────────────────────────
 
@@ -177,6 +236,9 @@ export function ProfileCard({
             </p>
           )}
         </div>
+
+        {/* Relationships */}
+        <RelationshipsSection pubkey={person.pubkey} />
 
         {/* Footer */}
         <div className="profile-card-footer">

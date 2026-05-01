@@ -28,8 +28,9 @@ function PersonAvatar({ name }: { name: string }) {
 
 function PersonListItem({ person, onClick }: { person: Person; onClick: () => void }) {
   const claims = store.getClaimsForPerson(person.pubkey)
-  const bornClaim = claims.find(c => c.field === 'born' && !c.retracted)
-  const diedClaim = claims.find(c => c.field === 'died' && !c.retracted)
+  const bornClaim   = claims.filter(c => c.field === 'born'       && !c.retracted).sort((a,b) => b.confidenceScore - a.confidenceScore)[0]
+  const diedClaim   = claims.filter(c => c.field === 'died'       && !c.retracted).sort((a,b) => b.confidenceScore - a.confidenceScore)[0]
+  const placeClaim  = claims.filter(c => c.field === 'birthplace' && !c.retracted).sort((a,b) => b.confidenceScore - a.confidenceScore)[0]
 
   let dates = ''
   if (bornClaim?.value) dates += `b. ${bornClaim.value}`
@@ -40,7 +41,11 @@ function PersonListItem({ person, onClick }: { person: Person; onClick: () => vo
       <PersonAvatar name={person.displayName} />
       <div style={{ flex: 1, textAlign: 'left' }}>
         <div className="person-name">{person.displayName}</div>
-        {dates && <div className="person-dates">{dates}</div>}
+        {(dates || placeClaim?.value) && (
+          <div className="person-dates">
+            {dates}{dates && placeClaim?.value ? ' · ' : ''}{placeClaim?.value}
+          </div>
+        )}
       </div>
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ color: 'var(--ink-muted)', flexShrink: 0 }}>
         <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>

@@ -44,8 +44,23 @@ export type RelationshipType =
   | 'child'
   | 'spouse'
   | 'sibling'
-  | 'grandparent'
-  | 'grandchild'
+
+/**
+ * Metadata attached to a relationship claim.
+ * Spouse: start/end dates, status, whether the couple produced children together.
+ * Parent/child: optional adoption flag, conception date range.
+ */
+export interface RelationshipMeta {
+  // Spouse / partner
+  startDate?: string          // e.g. "1985" or "12 June 1985"
+  endDate?: string            // if relationship ended
+  status?: 'married' | 'unmarried' | 'separated' | 'divorced' | 'widowed'
+  // Parent-child
+  adopted?: boolean
+  // Shared children date range (applies to spouse/partner edge)
+  childrenFromYear?: string
+  childrenToYear?: string
+}
 
 export type SensitiveRelationshipSubtype =
   | 'adopted'
