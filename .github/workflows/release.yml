@@ -164,7 +164,9 @@ jobs:
       - name: Flatten artifacts into single directory
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.blockmap" -o -name "*.yml" \) -exec cp {} release-assets/ \;
+          # Copy only installer-level files — exclude win-unpacked/ contents
+          # Setup exe, blockmap, and yml files from the root of each platform build
+          find artifacts -type f \( -name "*-Setup-*.exe" -o -name "*-Setup-*.dmg" -o -name "*-Setup-*.zip" -o -name "*-Setup-*.AppImage" -o -name "*-Setup-*.deb" -o -name "*.exe.blockmap" -o -name "*.dmg.blockmap" -o -name "*.zip.blockmap" -o -name "*.AppImage.blockmap" -o -name "latest*.yml" \) -exec cp {} release-assets/ \;
           echo "--- Release assets ---"
           ls -lh release-assets/
 

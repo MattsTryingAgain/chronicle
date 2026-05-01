@@ -792,3 +792,11 @@ Comparable to Stage 4 in complexity. The platform abstraction layer is the most 
 - `.github/workflows/release.yml`: changed all artifact upload globs to recursive (`release/**/*.exe` etc.); added `if-no-files-found: warn` so build failures are visible; added a "Flatten artifacts" step in the release job that copies all installer files and `.yml` files into a single flat directory before uploading to GitHub Releases — this ensures `latest.yml` and the exe land at the root of the release, which is what electron-updater expects when constructing download URLs
 
 **Windows Defender SmartScreen warning:** expected for unsigned builds — not related to the updater failure. Requires an EV code signing certificate to suppress; deferred.
+
+### Fix: auto-updater — clean release assets (v1.0.35)
+
+**Diagnosis:** v1.0.34 release assets confirmed correct — `Chronicle-Setup-1.0.34.exe`, `Chronicle-Setup-1.0.34.exe.blockmap`, and `latest.yml` all present. The 404 in v1.0.33 was because that installed version had a malformed `app-update.yml` baked in from the earlier broken builds.
+
+**Resolution:** Install v1.0.34 manually (one last time), then test the in-app updater for v1.0.35. The `app-update.yml` baked into v1.0.34 is correct and should allow the updater to work going forward.
+
+**Also fixed:** The flatten step in `release.yml` was too greedy — it was picking up `Chronicle.exe` and `elevate.exe` from `win-unpacked/` and uploading them to the release. Fixed the find pattern to only match `*-Setup-*` installer files and `latest*.yml`, excluding unpacked directory contents.
