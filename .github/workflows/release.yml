@@ -39,16 +39,23 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Build
-        run: node_modules/.bin/vite build && npx electron-builder --win --publish never
+      - name: Build Vite app
+        run: node_modules/.bin/vite build
+
+      - name: Build Windows installer
+        run: npx electron-builder --win --publish never
+
+      - name: List release output
+        shell: pwsh
+        run: Get-ChildItem release -Recurse | Select-Object FullName
 
       - uses: actions/upload-artifact@v4
         with:
           name: windows-build
           path: |
-            dist/*.exe
-            dist/*.blockmap
-            dist/*.yml
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
 
   build-mac:
     runs-on: macos-latest
@@ -77,17 +84,23 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Build
-        run: node_modules/.bin/vite build && npx electron-builder --mac --publish never
+      - name: Build Vite app
+        run: node_modules/.bin/vite build
+
+      - name: Build Mac installer
+        run: npx electron-builder --mac --publish never
+
+      - name: List release output
+        run: find release -type f | sort
 
       - uses: actions/upload-artifact@v4
         with:
           name: mac-build
           path: |
-            dist/*.dmg
-            dist/*.zip
-            dist/*.blockmap
-            dist/*.yml
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/latest-mac.yml
 
   build-linux:
     runs-on: ubuntu-latest
@@ -116,17 +129,23 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Build
-        run: node_modules/.bin/vite build && npx electron-builder --linux --publish never
+      - name: Build Vite app
+        run: node_modules/.bin/vite build
+
+      - name: Build Linux installer
+        run: npx electron-builder --linux --publish never
+
+      - name: List release output
+        run: find release -type f | sort
 
       - uses: actions/upload-artifact@v4
         with:
           name: linux-build
           path: |
-            dist/*.AppImage
-            dist/*.deb
-            dist/*.blockmap
-            dist/*.yml
+            release/*.AppImage
+            release/*.deb
+            release/*.blockmap
+            release/latest-linux.yml
 
   release:
     needs: [build-windows, build-mac, build-linux]
@@ -135,6 +154,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: List all artifacts
+        run: find artifacts -type f | sort
 
       - uses: softprops/action-gh-release@v2
         with:

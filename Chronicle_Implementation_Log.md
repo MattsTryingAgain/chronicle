@@ -746,3 +746,12 @@ Comparable to Stage 4 in complexity. The platform abstraction layer is the most 
 - Tree fills the full viewport below the nav bar (app-shell max-width removed for graph tab; app-content overflow:hidden + flex layout)
 - Clicking a node opens a slide-in action panel on the right showing: name, dates, birthplace; action buttons for Edit information, View full profile, Photos & media (coming soon), Stories (coming soon), Documents (coming soon), Timeline (coming soon); "Make this person the tree root" at the bottom
 - onEditPerson prop added to FamilyTreeView; wired from App.tsx
+
+### Fix: auto-updater 404 (v1.0.32)
+
+**Root cause:** electron-builder defaults to outputting installers into `dist/`, the same directory Vite uses for the web app bundle. This caused the artifact upload globs (`dist/*.exe`, `dist/*.yml`) to either pick up wrong files or miss the `latest.yml` that electron-updater requires.
+
+**Fix:**
+- `package.json` build config: added `directories.output = "release"` — electron-builder now writes installers and `latest.yml` to `release/` rather than `dist/`
+- `.github/workflows/release.yml`: updated all artifact upload paths from `dist/*` to `release/*`; split Vite build and electron-builder into separate named steps; added a `List release output` step per platform to make future debugging easy; updated yml filenames to `latest.yml` (Windows), `latest-mac.yml` (Mac), `latest-linux.yml` (Linux)
+- The `release` job already correctly uses `softprops/action-gh-release` to attach all artifacts — no change needed there

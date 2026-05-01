@@ -63,6 +63,10 @@
       "provider": "github",
       "owner": "MattsTryingAgain",
       "repo": "chronicle"
+    },
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
     }
   },
   "dependencies": {
