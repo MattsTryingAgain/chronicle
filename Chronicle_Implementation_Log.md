@@ -782,3 +782,13 @@ Comparable to Stage 4 in complexity. The platform abstraction layer is the most 
 **Notes for next session:**
 - Ancestor keypairs deliberately dropped — to be revisited with social recovery model
 - Existing stored relationships have no `meta` — will display without metadata, which is fine
+
+### Fix: auto-updater 404 (attempt 2) (v1.0.34)
+
+**Root cause analysis:** electron-builder doesn't always write the installer directly to `release/` — NSIS builds go to `release/` but in some configurations electron-builder nests output in subdirectories. The artifact upload glob `release/*.exe` was too shallow.
+
+**Fixes:**
+- `package.json`: added explicit `artifactName: "${productName}-Setup-${version}.${ext}"` so the filename is 100% predictable; removed `portable` from Windows targets (portable builds don't support auto-update and were creating a second exe that could confuse the updater)
+- `.github/workflows/release.yml`: changed all artifact upload globs to recursive (`release/**/*.exe` etc.); added `if-no-files-found: warn` so build failures are visible; added a "Flatten artifacts" step in the release job that copies all installer files and `.yml` files into a single flat directory before uploading to GitHub Releases — this ensures `latest.yml` and the exe land at the root of the release, which is what electron-updater expects when constructing download URLs
+
+**Windows Defender SmartScreen warning:** expected for unsigned builds — not related to the updater failure. Requires an EV code signing certificate to suppress; deferred.

@@ -53,9 +53,10 @@ jobs:
         with:
           name: windows-build
           path: |
-            release/*.exe
-            release/*.blockmap
-            release/latest.yml
+            release/**/*.exe
+            release/**/*.blockmap
+            release/**/latest.yml
+          if-no-files-found: warn
 
   build-mac:
     runs-on: macos-latest
@@ -97,10 +98,11 @@ jobs:
         with:
           name: mac-build
           path: |
-            release/*.dmg
-            release/*.zip
-            release/*.blockmap
-            release/latest-mac.yml
+            release/**/*.dmg
+            release/**/*.zip
+            release/**/*.blockmap
+            release/**/latest-mac.yml
+          if-no-files-found: warn
 
   build-linux:
     runs-on: ubuntu-latest
@@ -142,10 +144,11 @@ jobs:
         with:
           name: linux-build
           path: |
-            release/*.AppImage
-            release/*.deb
-            release/*.blockmap
-            release/latest-linux.yml
+            release/**/*.AppImage
+            release/**/*.deb
+            release/**/*.blockmap
+            release/**/latest-linux.yml
+          if-no-files-found: warn
 
   release:
     needs: [build-windows, build-mac, build-linux]
@@ -158,9 +161,16 @@ jobs:
       - name: List all artifacts
         run: find artifacts -type f | sort
 
+      - name: Flatten artifacts into single directory
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.blockmap" -o -name "*.yml" \) -exec cp {} release-assets/ \;
+          echo "--- Release assets ---"
+          ls -lh release-assets/
+
       - uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
+          files: release-assets/*
           prerelease: ${{ contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -43,9 +43,9 @@
     "win": {
       "icon": "assets/icon.ico",
       "target": [
-        "nsis",
-        "portable"
-      ]
+        "nsis"
+      ],
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "linux": {
       "icon": "assets/icon.png",
@@ -67,7 +67,8 @@
     "directories": {
       "output": "release",
       "buildResources": "assets"
-    }
+    },
+    "artifactName": "${productName}-Setup-${version}.${ext}"
   },
   "dependencies": {
     "@noble/secp256k1": "^3.0.0",
