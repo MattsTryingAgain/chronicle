@@ -1,10 +1,13 @@
 /**
- * FamilyTreeView — generational family tree, app-themed
+ * FamilyTreeView — family-unit-aware generational layout
  *
- * - Cream/white background matching the rest of the app
- * - Node cards styled with navy/gold palette
- * - Clicking a node opens an action panel (stub buttons for future features)
- * - Fills the full viewport below the nav bar
+ * Layout principles:
+ * - Couples (spouse pairs) are positioned adjacent and treated as one unit
+ * - Parent→child connectors drop from the midpoint between a couple (or from
+ *   a solo parent), only when an actual parent edge exists in the graph
+ * - Sibling edges are not drawn — siblings are visually grouped under the same
+ *   parent connector
+ * - Spouse line: solid = married, dashed = all other statuses
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
@@ -39,7 +42,8 @@ interface FamilyTreeViewProps {
 
 const NODE_W   = 180
 const NODE_H   = 60
-const H_GAP    = 40
+const H_GAP    = 40       // gap between nodes in same row
+const COUPLE_GAP = 24     // tighter gap between spouses
 const V_GAP    = 110
 const CORNER_R = 10
 
@@ -72,10 +76,17 @@ function buildNodeData(pubkey: string, generation: number): NodeData {
   }
 }
 
-function assignGenerations(rootPubkey: string, nodes: string[], edges: GraphEdge[]): Map<string, number> {
+// ─── Generation assignment ────────────────────────────────────────────────────
+
+function assignGenerations(
+  rootPubkey: string,
+  nodes: string[],
+  edges: GraphEdge[],
+): Map<string, number> {
   const genMap = new Map<string, number>()
   genMap.set(rootPubkey, 0)
 
+  // Build adjacency: for each node, list of {neighbour, rel, asSubject}
   const adj = new Map<string, Array<{ neighbour: string; rel: string; asSubject: boolean }>>()
   for (const n of nodes) adj.set(n, [])
   for (const e of edges) {
@@ -91,11 +102,12 @@ function assignGenerations(rootPubkey: string, nodes: string[], edges: GraphEdge
       if (genMap.has(neighbour)) continue
       let delta = 0
       if (asSubject) {
-        if (rel === 'parent' || rel === 'grandparent') delta = 1
-        else if (rel === 'child' || rel === 'grandchild') delta = -1
+        if (rel === 'parent') delta = 1
+        else if (rel === 'child') delta = -1
+        // spouse/sibling = same gen, delta stays 0
       } else {
-        if (rel === 'parent' || rel === 'grandparent') delta = -1
-        else if (rel === 'child' || rel === 'grandchild') delta = 1
+        if (rel === 'parent') delta = -1
+        else if (rel === 'child') delta = 1
       }
       genMap.set(neighbour, currentGen + delta)
       queue.push(neighbour)
@@ -105,29 +117,116 @@ function assignGenerations(rootPubkey: string, nodes: string[], edges: GraphEdge
   return genMap
 }
 
-function computeLayout(nodes: string[], genMap: Map<string, number>, rootPubkey: string): Map<string, { x: number; y: number }> {
+// ─── Family-unit-aware layout ─────────────────────────────────────────────────
+//
+// Algorithm:
+// 1. Find all spouse pairs — treat each pair as a single "slot"
+// 2. For each generation, lay out slots (couple or solo) left to right
+// 3. Position couple members side by side with COUPLE_GAP between them
+// 4. Track the midpoint X of each slot — used for connector origins/targets
+
+interface Slot {
+  members: string[]      // 1 or 2 pubkeys
+  midX: number           // centre of the slot
+  y: number
+}
+
+function computeLayout(
+  nodes: string[],
+  genMap: Map<string, number>,
+  edges: GraphEdge[],
+  rootPubkey: string,
+): { posMap: Map<string, { x: number; y: number }>; slotMap: Map<string, Slot> } {
+  // Build spouse pairs
+  const spouseOf = new Map<string, string>()
+  for (const e of edges) {
+    if (e.relationship === 'spouse') {
+      spouseOf.set(e.fromPubkey, e.toPubkey)
+      spouseOf.set(e.toPubkey, e.fromPubkey)
+    }
+  }
+
+  // Group nodes by generation
   const byGen = new Map<number, string[]>()
   for (const n of nodes) {
     const g = genMap.get(n) ?? 0
     if (!byGen.has(g)) byGen.set(g, [])
     byGen.get(g)!.push(n)
   }
+
   const gens = Array.from(byGen.keys()).sort((a, b) => a - b)
   const minGen = gens[0] ?? 0
+
   const posMap = new Map<string, { x: number; y: number }>()
+  const slotMap = new Map<string, Slot>() // keyed by each member pubkey
+
   for (const gen of gens) {
-    const members = byGen.get(gen)!.sort((a, b) => a === rootPubkey ? -1 : b === rootPubkey ? 1 : 0)
-    const totalWidth = members.length * (NODE_W + H_GAP) - H_GAP
-    const startX = -totalWidth / 2 + NODE_W / 2
-    // gen increases: 0=root, +1=children, +2=grandchildren etc.
-    // ancestors assigned negative gen in assignGenerations, so they sort above root.
-    // yPos: minGen row at top, increases downward.
+    const members = byGen.get(gen)!
     const yPos = (gen - minGen) * (NODE_H + V_GAP)
-    members.forEach((pk, i) => {
-      posMap.set(pk, { x: startX + i * (NODE_W + H_GAP), y: yPos })
-    })
+
+    // Build slots for this generation — avoid duplicating couples
+    const slots: Array<{ members: string[] }> = []
+    const placed = new Set<string>()
+
+    // Root and their spouse first
+    const rootInGen = members.find(m => m === rootPubkey)
+    const rootSpouseInGen = rootInGen ? members.find(m => spouseOf.get(rootInGen) === m) : undefined
+
+    const orderedMembers = rootInGen
+      ? [rootInGen, ...members.filter(m => m !== rootInGen)]
+      : [...members]
+
+    for (const pk of orderedMembers) {
+      if (placed.has(pk)) continue
+      const spouse = spouseOf.get(pk)
+      if (spouse && members.includes(spouse) && !placed.has(spouse)) {
+        // Put root before spouse, otherwise preserve order
+        const isRoot = pk === rootPubkey
+        slots.push({ members: isRoot ? [pk, spouse] : [pk, spouse] })
+        placed.add(pk)
+        placed.add(spouse)
+      } else {
+        slots.push({ members: [pk] })
+        placed.add(pk)
+      }
+    }
+
+    // Calculate total width of this generation
+    let totalWidth = 0
+    for (const slot of slots) {
+      if (totalWidth > 0) totalWidth += H_GAP
+      totalWidth += slot.members.length === 2
+        ? NODE_W * 2 + COUPLE_GAP
+        : NODE_W
+    }
+
+    let curX = -totalWidth / 2 + NODE_W / 2
+
+    for (const slot of slots) {
+      const slotMidX = slot.members.length === 2
+        ? curX + NODE_W / 2 + COUPLE_GAP / 2  // midpoint between the two
+        : curX
+
+      if (slot.members.length === 2) {
+        const [a, b] = slot.members
+        posMap.set(a, { x: curX, y: yPos })
+        posMap.set(b, { x: curX + NODE_W + COUPLE_GAP, y: yPos })
+        const slotObj: Slot = { members: [a, b], midX: slotMidX, y: yPos }
+        slotMap.set(a, slotObj)
+        slotMap.set(b, slotObj)
+        curX += NODE_W * 2 + COUPLE_GAP + H_GAP
+      } else {
+        const [a] = slot.members
+        posMap.set(a, { x: curX, y: yPos })
+        const slotObj: Slot = { members: [a], midX: curX, y: yPos }
+        slotMap.set(a, slotObj)
+        curX += NODE_W + H_GAP
+      }
+    }
+    void rootSpouseInGen // suppress unused warning
   }
-  return posMap
+
+  return { posMap, slotMap }
 }
 
 // ─── Action Panel ─────────────────────────────────────────────────────────────
@@ -343,7 +442,7 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
 
     // ── Layout ────────────────────────────────────────────────────────────────
     const genMap = assignGenerations(rootPubkey, nodes, edges)
-    const posMap = computeLayout(nodes, genMap, rootPubkey)
+    const { posMap, slotMap } = computeLayout(nodes, genMap, edges, rootPubkey)
 
     const nodeDataMap = new Map<string, NodeData>()
     for (const pk of nodes) {
@@ -356,60 +455,192 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
     // ── Edges ─────────────────────────────────────────────────────────────────
     const edgeGroup = g.append('g')
 
+    // ── Pass 1: collect spouse edges and build parent→children map ────────────
+    //
+    // Strategy: for each child, record ALL their parents visible in the graph.
+    // Only use a couple midpoint when BOTH recorded parents of that child are
+    // in the same spouse slot. Otherwise connect from the individual parent.
+    // This prevents Matt+Caroline's relationship from making it look like they
+    // jointly parented Maria's children.
+
+    // Map: childPk → Set of parentPks (from actual parent/child edges only)
+    const childParents = new Map<string, Set<string>>()
+
+    // Spouse lookup: pk → pk (only for pairs visible in this traversal)
+    const spouseInGraph = new Map<string, string>()
+
     for (const edge of edges) {
+      if (edge.relationship === 'sibling') continue
+
+      if (edge.relationship === 'spouse') {
+        spouseInGraph.set(edge.fromPubkey, edge.toPubkey)
+        spouseInGraph.set(edge.toPubkey, edge.fromPubkey)
+        continue
+      }
+
+      let parentPk: string, childPk: string
+      if (edge.relationship === 'parent') {
+        parentPk = edge.fromPubkey
+        childPk  = edge.toPubkey
+      } else {
+        parentPk = edge.toPubkey
+        childPk  = edge.fromPubkey
+      }
+
+      if (!nodeDataMap.has(parentPk) || !nodeDataMap.has(childPk)) continue
+
+      if (!childParents.has(childPk)) childParents.set(childPk, new Set())
+      childParents.get(childPk)!.add(parentPk)
+    }
+
+    // ── Pass 2: draw spouse lines ─────────────────────────────────────────────
+    for (const edge of edges) {
+      if (edge.relationship !== 'spouse') continue
       const from = nodeDataMap.get(edge.fromPubkey)
       const to   = nodeDataMap.get(edge.toPubkey)
       if (!from || !to) continue
 
-      // Siblings are implied by shared parents — don't draw a direct link
-      if (edge.relationship === 'sibling') continue
-
-      const isSpouse = edge.relationship === 'spouse'
       const stroke = edge.sensitive ? '#c5b89a' : '#c9a96e'
+      const status = edge.meta?.status
+      const dash = (status === 'married') ? null : '6,3'
+      const x1 = from.x + (from.x < to.x ? NODE_W / 2 : -NODE_W / 2)
+      const x2 = to.x   + (from.x < to.x ? -NODE_W / 2 : NODE_W / 2)
+      const y  = (from.y + to.y) / 2
+      edgeGroup.append('line')
+        .attr('x1', x1).attr('y1', y).attr('x2', x2).attr('y2', y)
+        .attr('stroke', stroke)
+        .attr('stroke-dasharray', dash)
+        .attr('stroke-width', 1.5)
+        .attr('opacity', 0.7)
+    }
 
-      // Spouse line: solid if married, dashed for all other statuses (divorced, unmarried, unknown, etc.)
-      let dash: string
-      if (isSpouse) {
-        const status = edge.meta?.status
-        dash = (status === 'married') ? 'none' : '6,3'
-      } else {
-        dash = edge.sensitive ? '4,4' : 'none'
+    // ── Pass 3: build parent-unit → children groups for connectors ────────────
+    //
+    // Key: for each child, determine their "parent unit":
+    //   - If they have exactly 2 parents AND those 2 parents are spouses in the
+    //     graph AND both are visible → use couple midpoint, key = sorted pair
+    //   - Otherwise → one connector per individual parent, key = parent pubkey
+
+    const parentToChildren = new Map<string, { parentMidX: number; parentY: number; childXs: number[]; childY: number }>()
+
+    for (const [childPk, parents] of childParents.entries()) {
+      const childNode = nodeDataMap.get(childPk)
+      if (!childNode) continue
+
+      const parentList = Array.from(parents).filter(p => nodeDataMap.has(p))
+      if (parentList.length === 0) continue
+
+      // Check if this child has exactly 2 parents who are spouses of each other
+      let useCouple = false
+      let coupleKey = ''
+      let coupleMidX = 0
+      let coupleY = 0
+
+      if (parentList.length === 2) {
+        const [pA, pB] = parentList
+        if (spouseInGraph.get(pA) === pB) {
+          // Both parents are a recorded couple — use midpoint
+          const slotA = slotMap.get(pA)
+          const slotB = slotMap.get(pB)
+          // Only use couple midpoint if they share the same slot
+          if (slotA && slotB && slotA === slotB) {
+            useCouple = true
+            coupleKey = [pA, pB].sort().join('|')
+            coupleMidX = slotA.midX
+            coupleY = nodeDataMap.get(pA)!.y
+          }
+        }
       }
-      const width  = 1.5
 
-      if (isSpouse) {
-        const x1 = from.x + (from.x < to.x ? NODE_W / 2 : -NODE_W / 2)
-        const x2 = to.x   + (from.x < to.x ? -NODE_W / 2 : NODE_W / 2)
-        const y  = (from.y + to.y) / 2
-        edgeGroup.append('line')
-          .attr('x1', x1).attr('y1', y).attr('x2', x2).attr('y2', y)
-          .attr('stroke', stroke).attr('stroke-dasharray', dash === 'none' ? null : dash).attr('stroke-width', width)
-          .attr('opacity', 0.6)
+      if (useCouple) {
+        if (!parentToChildren.has(coupleKey)) {
+          parentToChildren.set(coupleKey, { parentMidX: coupleMidX, parentY: coupleY, childXs: [], childY: childNode.y })
+        }
+        parentToChildren.get(coupleKey)!.childXs.push(childNode.x)
       } else {
-        const fromBelow = from.y < to.y
-        const x1 = from.x, y1 = from.y + (fromBelow ? NODE_H / 2 : -NODE_H / 2)
-        const x2 = to.x,   y2 = to.y   + (fromBelow ? -NODE_H / 2 : NODE_H / 2)
-        const midY = (y1 + y2) / 2
+        // Connect from each individual parent separately
+        for (const parentPk of parentList) {
+          const parentNode = nodeDataMap.get(parentPk)!
+          const key = parentPk
+          if (!parentToChildren.has(key)) {
+            parentToChildren.set(key, { parentMidX: parentNode.x, parentY: parentNode.y, childXs: [], childY: childNode.y })
+          }
+          parentToChildren.get(key)!.childXs.push(childNode.x)
+        }
+      }
+    }
 
-        if (Math.abs(x1 - x2) < 4) {
+    // Now draw the grouped parent→children connectors
+    for (const { parentMidX, parentY, childXs, childY } of parentToChildren.values()) {
+      if (childXs.length === 0) continue
+
+      const stroke = '#c9a96e'
+      const parentBottom = parentY + NODE_H / 2
+      const childTop     = childY  - NODE_H / 2
+      const midY = (parentBottom + childTop) / 2
+
+      const minChildX = Math.min(...childXs)
+      const maxChildX = Math.max(...childXs)
+
+      if (childXs.length === 1) {
+        // Single child — simple elbow from parent midpoint
+        const cx = childXs[0]
+        if (Math.abs(parentMidX - cx) < 4) {
           edgeGroup.append('line')
-            .attr('x1', x1).attr('y1', y1).attr('x2', x2).attr('y2', y2)
-            .attr('stroke', stroke).attr('stroke-dasharray', dash).attr('stroke-width', width)
+            .attr('x1', parentMidX).attr('y1', parentBottom)
+            .attr('x2', cx).attr('y2', childTop)
+            .attr('stroke', stroke).attr('stroke-width', 1.5)
         } else {
-          const dx = x2 > x1 ? 1 : -1
-          const dy = fromBelow ? 1 : -1
-          const r  = Math.min(CORNER_R, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2)
+          const dx = cx > parentMidX ? 1 : -1
+          const r = Math.min(CORNER_R, Math.abs(cx - parentMidX) / 2, Math.abs(childTop - parentBottom) / 2)
           edgeGroup.append('path')
             .attr('d', [
-              `M ${x1} ${y1}`,
-              `L ${x1} ${midY - dy * r}`,
-              `Q ${x1} ${midY} ${x1 + dx * r} ${midY}`,
-              `L ${x2 - dx * r} ${midY}`,
-              `Q ${x2} ${midY} ${x2} ${midY + dy * r}`,
-              `L ${x2} ${y2}`,
+              `M ${parentMidX} ${parentBottom}`,
+              `L ${parentMidX} ${midY - r}`,
+              `Q ${parentMidX} ${midY} ${parentMidX + dx * r} ${midY}`,
+              `L ${cx - dx * r} ${midY}`,
+              `Q ${cx} ${midY} ${cx} ${midY + r}`,
+              `L ${cx} ${childTop}`,
             ].join(' '))
             .attr('fill', 'none')
-            .attr('stroke', stroke).attr('stroke-dasharray', dash).attr('stroke-width', width)
+            .attr('stroke', stroke).attr('stroke-width', 1.5)
+        }
+      } else {
+        // Multiple children — drop from parent midpoint to horizontal bar,
+        // then vertical lines down to each child
+        const r = CORNER_R
+
+        // Vertical stem from parent down to horizontal bar
+        edgeGroup.append('line')
+          .attr('x1', parentMidX).attr('y1', parentBottom)
+          .attr('x2', parentMidX).attr('y2', midY)
+          .attr('stroke', stroke).attr('stroke-width', 1.5)
+
+        // Horizontal bar spanning all children
+        edgeGroup.append('line')
+          .attr('x1', minChildX).attr('y1', midY)
+          .attr('x2', maxChildX).attr('y2', midY)
+          .attr('stroke', stroke).attr('stroke-width', 1.5)
+
+        // Vertical drops from bar to each child
+        for (const cx of childXs) {
+          edgeGroup.append('line')
+            .attr('x1', cx).attr('y1', midY)
+            .attr('x2', cx).attr('y2', childTop)
+            .attr('stroke', stroke).attr('stroke-width', 1.5)
+        }
+
+        // Connect parent midX to the bar if not already on it
+        if (parentMidX < minChildX || parentMidX > maxChildX) {
+          const dx = parentMidX < minChildX ? 1 : -1
+          const barX = parentMidX < minChildX ? minChildX : maxChildX
+          edgeGroup.append('path')
+            .attr('d', [
+              `M ${parentMidX} ${midY}`,
+              `L ${barX - dx * r} ${midY}`,
+            ].join(' '))
+            .attr('fill', 'none')
+            .attr('stroke', stroke).attr('stroke-width', 1.5)
         }
       }
     }
