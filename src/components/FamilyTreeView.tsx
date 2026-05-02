@@ -137,7 +137,8 @@ function computeLayout(
   edges: GraphEdge[],
   rootPubkey: string,
 ): { posMap: Map<string, { x: number; y: number }>; slotMap: Map<string, Slot> } {
-  // Build spouse pairs
+  // Build spouse pairs — set both directions since traversal may only include
+  // one direction of each stored spouse pair (deduped by claimEventId)
   const spouseOf = new Map<string, string>()
   for (const e of edges) {
     if (e.relationship === 'spouse') {
@@ -213,7 +214,7 @@ function computeLayout(
         posMap.set(b, { x: curX + NODE_W + COUPLE_GAP, y: yPos })
         const slotObj: Slot = { members: [a, b], midX: slotMidX, y: yPos }
         slotMap.set(a, slotObj)
-        slotMap.set(b, slotObj)
+        slotMap.set(b, slotObj)  // same object reference — identity check in Pass 3 works
         curX += NODE_W * 2 + COUPLE_GAP + H_GAP
       } else {
         const [a] = slot.members
@@ -542,10 +543,13 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
           // Both parents are a recorded couple — use midpoint
           const slotA = slotMap.get(pA)
           const slotB = slotMap.get(pB)
-          // Only use couple midpoint if they share the same slot
-          if (slotA && slotB && slotA === slotB) {
+          // Only use couple midpoint if they share the same slot.
+          // Compare by sorted member keys rather than object identity for robustness.
+          const slotKeyA = slotA ? [...slotA.members].sort().join('|') : ''
+          const slotKeyB = slotB ? [...slotB.members].sort().join('|') : ''
+          if (slotA && slotB && slotKeyA === slotKeyB && slotKeyA !== '') {
             useCouple = true
-            coupleKey = [pA, pB].sort().join('|')
+            coupleKey = slotKeyA
             coupleMidX = slotA.midX
             coupleY = nodeDataMap.get(pA)!.y
           }
