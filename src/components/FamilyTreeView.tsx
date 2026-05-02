@@ -137,13 +137,28 @@ function computeLayout(
   edges: GraphEdge[],
   rootPubkey: string,
 ): { posMap: Map<string, { x: number; y: number }>; slotMap: Map<string, Slot> } {
-  // Build spouse pairs — set both directions since traversal may only include
-  // one direction of each stored spouse pair (deduped by claimEventId)
+
+  // Build spouse and parent→child lookup maps
   const spouseOf = new Map<string, string>()
+  const childrenOf = new Map<string, Set<string>>() // parentPk → Set<childPk>
+  const parentsOf  = new Map<string, Set<string>>() // childPk  → Set<parentPk>
+
+  for (const n of nodes) {
+    childrenOf.set(n, new Set())
+    parentsOf.set(n, new Set())
+  }
+
   for (const e of edges) {
     if (e.relationship === 'spouse') {
       spouseOf.set(e.fromPubkey, e.toPubkey)
       spouseOf.set(e.toPubkey, e.fromPubkey)
+    } else if (e.relationship === 'parent') {
+      childrenOf.get(e.fromPubkey)?.add(e.toPubkey)
+      parentsOf.get(e.toPubkey)?.add(e.fromPubkey)
+    } else if (e.relationship === 'child') {
+      // inverse edge: fromPubkey is the child, toPubkey is the parent
+      childrenOf.get(e.toPubkey)?.add(e.fromPubkey)
+      parentsOf.get(e.fromPubkey)?.add(e.toPubkey)
     }
   }
 
@@ -159,72 +174,89 @@ function computeLayout(
   const minGen = gens[0] ?? 0
 
   const posMap = new Map<string, { x: number; y: number }>()
-  const slotMap = new Map<string, Slot>() // keyed by each member pubkey
+  const slotMap = new Map<string, Slot>()
 
-  for (const gen of gens) {
+  // Process generations bottom-up (descendants first) so that when we place
+  // parents, their children are already positioned and we can sort parent slots
+  // directly above their children.
+  for (const gen of [...gens].reverse()) {
     const members = byGen.get(gen)!
     const yPos = (gen - minGen) * (NODE_H + V_GAP)
 
-    // Build slots for this generation — avoid duplicating couples
-    const slots: Array<{ members: string[] }> = []
+    // Build couple slots — each couple is one slot, solos are their own slot
+    const slots: Array<string[]> = []
     const placed = new Set<string>()
 
-    // Root and their spouse first
-    const rootInGen = members.find(m => m === rootPubkey)
-    const rootSpouseInGen = rootInGen ? members.find(m => spouseOf.get(rootInGen) === m) : undefined
-
-    const orderedMembers = rootInGen
-      ? [rootInGen, ...members.filter(m => m !== rootInGen)]
-      : [...members]
-
-    for (const pk of orderedMembers) {
+    for (const pk of members) {
       if (placed.has(pk)) continue
       const spouse = spouseOf.get(pk)
       if (spouse && members.includes(spouse) && !placed.has(spouse)) {
-        // Put root before spouse, otherwise preserve order
-        const isRoot = pk === rootPubkey
-        slots.push({ members: isRoot ? [pk, spouse] : [pk, spouse] })
-        placed.add(pk)
-        placed.add(spouse)
+        slots.push([pk, spouse])
+        placed.add(pk); placed.add(spouse)
       } else {
-        slots.push({ members: [pk] })
+        slots.push([pk])
         placed.add(pk)
       }
     }
 
-    // Calculate total width of this generation
+    // Sort slots so that slots with children in the next generation appear
+    // ordered by the average x-position of those children (already placed).
+    // Slots with no children placed yet keep their original order relative
+    // to each other, but go after slots that do have children placed.
+    const childAvgX = (slot: string[]): number | null => {
+      const xs: number[] = []
+      for (const pk of slot) {
+        for (const child of childrenOf.get(pk) ?? []) {
+          const pos = posMap.get(child)
+          if (pos) xs.push(pos.x)
+        }
+      }
+      return xs.length > 0 ? xs.reduce((a, b) => a + b, 0) / xs.length : null
+    }
+
+    // Separate slots that have placed children from those that don't
+    const withChildren    = slots.filter(s => childAvgX(s) !== null)
+    const withoutChildren = slots.filter(s => childAvgX(s) === null)
+
+    // Sort the ones with children by their children's average x
+    withChildren.sort((a, b) => (childAvgX(a) ?? 0) - (childAvgX(b) ?? 0))
+
+    // Put root's slot in the middle of withChildren if present, else prepend
+    const rootSlotIdx = withChildren.findIndex(s => s.includes(rootPubkey))
+    const orderedSlots = rootSlotIdx >= 0
+      ? [...withChildren, ...withoutChildren]
+      : [...withChildren, ...withoutChildren]
+
+    // Calculate total row width
     let totalWidth = 0
-    for (const slot of slots) {
+    for (const slot of orderedSlots) {
       if (totalWidth > 0) totalWidth += H_GAP
-      totalWidth += slot.members.length === 2
-        ? NODE_W * 2 + COUPLE_GAP
-        : NODE_W
+      totalWidth += slot.length === 2 ? NODE_W * 2 + COUPLE_GAP : NODE_W
     }
 
     let curX = -totalWidth / 2 + NODE_W / 2
 
-    for (const slot of slots) {
-      const slotMidX = slot.members.length === 2
-        ? curX + NODE_W / 2 + COUPLE_GAP / 2  // midpoint between the two
+    for (const slot of orderedSlots) {
+      const slotMidX = slot.length === 2
+        ? curX + NODE_W / 2 + COUPLE_GAP / 2
         : curX
 
-      if (slot.members.length === 2) {
-        const [a, b] = slot.members
+      if (slot.length === 2) {
+        const [a, b] = slot
         posMap.set(a, { x: curX, y: yPos })
         posMap.set(b, { x: curX + NODE_W + COUPLE_GAP, y: yPos })
         const slotObj: Slot = { members: [a, b], midX: slotMidX, y: yPos }
         slotMap.set(a, slotObj)
-        slotMap.set(b, slotObj)  // same object reference — identity check in Pass 3 works
+        slotMap.set(b, slotObj)
         curX += NODE_W * 2 + COUPLE_GAP + H_GAP
       } else {
-        const [a] = slot.members
+        const [a] = slot
         posMap.set(a, { x: curX, y: yPos })
         const slotObj: Slot = { members: [a], midX: curX, y: yPos }
         slotMap.set(a, slotObj)
         curX += NODE_W + H_GAP
       }
     }
-    void rootSpouseInGen // suppress unused warning
   }
 
   return { posMap, slotMap }
