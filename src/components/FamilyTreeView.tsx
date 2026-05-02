@@ -443,7 +443,7 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
 
     // ── Layout ────────────────────────────────────────────────────────────────
     const genMap = assignGenerations(rootPubkey, nodes, edges)
-    const { posMap, slotMap } = computeLayout(nodes, genMap, edges, rootPubkey)
+    const { posMap } = computeLayout(nodes, genMap, edges, rootPubkey)
 
     const nodeDataMap = new Map<string, NodeData>()
     for (const pk of nodes) {
@@ -454,202 +454,74 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
     }
 
     // ── Edges ─────────────────────────────────────────────────────────────────
+    // Simple rule: one line per edge. Parent→child = elbow connector from
+    // bottom of parent to top of child. Spouse = horizontal line between them.
+    // No grouping, no inferred midpoints — just draw what the data says.
     const edgeGroup = g.append('g')
-
-    // ── Pass 1: collect spouse edges and build parent→children map ────────────
-    //
-    // Strategy: for each child, record ALL their parents visible in the graph.
-    // Only use a couple midpoint when BOTH recorded parents of that child are
-    // in the same spouse slot. Otherwise connect from the individual parent.
-    // This prevents Matt+Caroline's relationship from making it look like they
-    // jointly parented Maria's children.
-
-    // Map: childPk → Set of parentPks (from actual parent/child edges only)
-    const childParents = new Map<string, Set<string>>()
-
-    // Spouse lookup: pk → pk (only for pairs visible in this traversal)
-    const spouseInGraph = new Map<string, string>()
 
     for (const edge of edges) {
       if (edge.relationship === 'sibling') continue
 
-      if (edge.relationship === 'spouse') {
-        spouseInGraph.set(edge.fromPubkey, edge.toPubkey)
-        spouseInGraph.set(edge.toPubkey, edge.fromPubkey)
-        continue
-      }
-
-      let parentPk: string, childPk: string
-      if (edge.relationship === 'parent') {
-        parentPk = edge.fromPubkey
-        childPk  = edge.toPubkey
-      } else {
-        parentPk = edge.toPubkey
-        childPk  = edge.fromPubkey
-      }
-
-      if (!nodeDataMap.has(parentPk) || !nodeDataMap.has(childPk)) continue
-
-      if (!childParents.has(childPk)) childParents.set(childPk, new Set())
-      childParents.get(childPk)!.add(parentPk)
-    }
-
-    // ── Pass 2: draw spouse lines ─────────────────────────────────────────────
-    for (const edge of edges) {
-      if (edge.relationship !== 'spouse') continue
       const from = nodeDataMap.get(edge.fromPubkey)
       const to   = nodeDataMap.get(edge.toPubkey)
       if (!from || !to) continue
 
       const stroke = edge.sensitive ? '#c5b89a' : '#c9a96e'
-      const status = edge.meta?.status
-      const dash = (status === 'married') ? null : '6,3'
-      const x1 = from.x + (from.x < to.x ? NODE_W / 2 : -NODE_W / 2)
-      const x2 = to.x   + (from.x < to.x ? -NODE_W / 2 : NODE_W / 2)
-      const y  = (from.y + to.y) / 2
-      edgeGroup.append('line')
-        .attr('x1', x1).attr('y1', y).attr('x2', x2).attr('y2', y)
-        .attr('stroke', stroke)
-        .attr('stroke-dasharray', dash)
-        .attr('stroke-width', 1.5)
-        .attr('opacity', 0.7)
-    }
 
-    // ── Pass 3: build parent-unit → children groups for connectors ────────────
-    //
-    // Key: for each child, determine their "parent unit":
-    //   - If they have exactly 2 parents AND those 2 parents are spouses in the
-    //     graph AND both are visible → use couple midpoint, key = sorted pair
-    //   - Otherwise → one connector per individual parent, key = parent pubkey
-
-    const parentToChildren = new Map<string, { parentMidX: number; parentY: number; childXs: number[]; childY: number }>()
-
-    for (const [childPk, parents] of childParents.entries()) {
-      const childNode = nodeDataMap.get(childPk)
-      if (!childNode) continue
-
-      const parentList = Array.from(parents).filter(p => nodeDataMap.has(p))
-      if (parentList.length === 0) continue
-
-      // Check if this child has exactly 2 parents who are spouses of each other
-      let useCouple = false
-      let coupleKey = ''
-      let coupleMidX = 0
-      let coupleY = 0
-
-      if (parentList.length === 2) {
-        const [pA, pB] = parentList
-        if (spouseInGraph.get(pA) === pB) {
-          // Both parents are a recorded couple — use midpoint
-          const slotA = slotMap.get(pA)
-          const slotB = slotMap.get(pB)
-          // Only use couple midpoint if they share the same slot.
-          // Compare by sorted member keys rather than object identity for robustness.
-          const slotKeyA = slotA ? [...slotA.members].sort().join('|') : ''
-          const slotKeyB = slotB ? [...slotB.members].sort().join('|') : ''
-          if (slotA && slotB && slotKeyA === slotKeyB && slotKeyA !== '') {
-            useCouple = true
-            coupleKey = slotKeyA
-            coupleMidX = slotA.midX
-            coupleY = nodeDataMap.get(pA)!.y
-          }
-        }
+      if (edge.relationship === 'spouse') {
+        const status = edge.meta?.status
+        const dash = (status === 'married') ? null : '6,3'
+        const x1 = from.x + (from.x <= to.x ? NODE_W / 2 : -NODE_W / 2)
+        const x2 = to.x   + (from.x <= to.x ? -NODE_W / 2 : NODE_W / 2)
+        const y  = (from.y + to.y) / 2
+        edgeGroup.append('line')
+          .attr('x1', x1).attr('y1', y).attr('x2', x2).attr('y2', y)
+          .attr('stroke', stroke).attr('stroke-dasharray', dash)
+          .attr('stroke-width', 1.5).attr('opacity', 0.7)
+        continue
       }
 
-      if (useCouple) {
-        if (!parentToChildren.has(coupleKey)) {
-          parentToChildren.set(coupleKey, { parentMidX: coupleMidX, parentY: coupleY, childXs: [], childY: childNode.y })
-        }
-        parentToChildren.get(coupleKey)!.childXs.push(childNode.x)
+      // Parent→child: determine which end is the parent
+      let parentNode: NodeData, childNode: NodeData
+      if (edge.relationship === 'parent') {
+        parentNode = from; childNode = to
       } else {
-        // Connect from each individual parent separately
-        for (const parentPk of parentList) {
-          const parentNode = nodeDataMap.get(parentPk)!
-          const key = parentPk
-          if (!parentToChildren.has(key)) {
-            parentToChildren.set(key, { parentMidX: parentNode.x, parentY: parentNode.y, childXs: [], childY: childNode.y })
-          }
-          parentToChildren.get(key)!.childXs.push(childNode.x)
-        }
+        // 'child' edge: fromPubkey is the child, toPubkey is the parent
+        parentNode = to; childNode = from
       }
-    }
 
-    // Now draw the grouped parent→children connectors
-    for (const { parentMidX, parentY, childXs, childY } of parentToChildren.values()) {
-      if (childXs.length === 0) continue
+      // Only draw if parent is actually above child
+      if (parentNode.y >= childNode.y) continue
 
-      const stroke = '#c9a96e'
-      const parentBottom = parentY + NODE_H / 2
-      const childTop     = childY  - NODE_H / 2
-      const midY = (parentBottom + childTop) / 2
+      const x1 = parentNode.x
+      const y1 = parentNode.y + NODE_H / 2
+      const x2 = childNode.x
+      const y2 = childNode.y - NODE_H / 2
+      const midY = (y1 + y2) / 2
+      const r = CORNER_R
 
-      const minChildX = Math.min(...childXs)
-      const maxChildX = Math.max(...childXs)
-
-      if (childXs.length === 1) {
-        // Single child — simple elbow from parent midpoint
-        const cx = childXs[0]
-        if (Math.abs(parentMidX - cx) < 4) {
-          edgeGroup.append('line')
-            .attr('x1', parentMidX).attr('y1', parentBottom)
-            .attr('x2', cx).attr('y2', childTop)
-            .attr('stroke', stroke).attr('stroke-width', 1.5)
-        } else {
-          const dx = cx > parentMidX ? 1 : -1
-          const r = Math.min(CORNER_R, Math.abs(cx - parentMidX) / 2, Math.abs(childTop - parentBottom) / 2)
-          edgeGroup.append('path')
-            .attr('d', [
-              `M ${parentMidX} ${parentBottom}`,
-              `L ${parentMidX} ${midY - r}`,
-              `Q ${parentMidX} ${midY} ${parentMidX + dx * r} ${midY}`,
-              `L ${cx - dx * r} ${midY}`,
-              `Q ${cx} ${midY} ${cx} ${midY + r}`,
-              `L ${cx} ${childTop}`,
-            ].join(' '))
-            .attr('fill', 'none')
-            .attr('stroke', stroke).attr('stroke-width', 1.5)
-        }
+      if (Math.abs(x1 - x2) < 4) {
+        edgeGroup.append('line')
+          .attr('x1', x1).attr('y1', y1).attr('x2', x2).attr('y2', y2)
+          .attr('stroke', stroke).attr('stroke-width', 1.5)
       } else {
-        // Multiple children — drop from parent midpoint to horizontal bar,
-        // then vertical lines down to each child
-        const r = CORNER_R
-
-        // Vertical stem from parent down to horizontal bar
-        edgeGroup.append('line')
-          .attr('x1', parentMidX).attr('y1', parentBottom)
-          .attr('x2', parentMidX).attr('y2', midY)
-          .attr('stroke', stroke).attr('stroke-width', 1.5)
-
-        // Horizontal bar spanning all children
-        edgeGroup.append('line')
-          .attr('x1', minChildX).attr('y1', midY)
-          .attr('x2', maxChildX).attr('y2', midY)
-          .attr('stroke', stroke).attr('stroke-width', 1.5)
-
-        // Vertical drops from bar to each child
-        for (const cx of childXs) {
-          edgeGroup.append('line')
-            .attr('x1', cx).attr('y1', midY)
-            .attr('x2', cx).attr('y2', childTop)
-            .attr('stroke', stroke).attr('stroke-width', 1.5)
-        }
-
-        // Connect parent midX to the bar if not already on it
-        if (parentMidX < minChildX || parentMidX > maxChildX) {
-          const dx = parentMidX < minChildX ? 1 : -1
-          const barX = parentMidX < minChildX ? minChildX : maxChildX
-          edgeGroup.append('path')
-            .attr('d', [
-              `M ${parentMidX} ${midY}`,
-              `L ${barX - dx * r} ${midY}`,
-            ].join(' '))
-            .attr('fill', 'none')
-            .attr('stroke', stroke).attr('stroke-width', 1.5)
-        }
+        const dx = x2 > x1 ? 1 : -1
+        const cr = Math.min(r, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2)
+        edgeGroup.append('path')
+          .attr('d', [
+            `M ${x1} ${y1}`,
+            `L ${x1} ${midY - cr}`,
+            `Q ${x1} ${midY} ${x1 + dx * cr} ${midY}`,
+            `L ${x2 - dx * cr} ${midY}`,
+            `Q ${x2} ${midY} ${x2} ${midY + cr}`,
+            `L ${x2} ${y2}`,
+          ].join(' '))
+          .attr('fill', 'none').attr('stroke', stroke).attr('stroke-width', 1.5)
       }
     }
 
     // ── Nodes ─────────────────────────────────────────────────────────────────
+        // ── Nodes ─────────────────────────────────────────────────────────────────
     const nodeGroup = g.append('g')
 
     const defs = svg.append('defs')
