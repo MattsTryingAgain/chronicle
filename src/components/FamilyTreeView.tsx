@@ -223,7 +223,7 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
     if (!containerRef.current) return
 
     // Clear any previous chart
-    containerRef.current.innerHTML = '<div id="FamilyChart" style="width:100%;height:100%"></div>'
+    containerRef.current.innerHTML = '<div id="FamilyChart" style="width:100%;height:100%;position:relative"></div>'
 
     const data = buildF3Data(rootPubkey)
     setNodeCount(data.length)
@@ -233,20 +233,26 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
     try {
       const chart = f3.createChart('#FamilyChart', data)
 
-      // setCardHtml returns the card instance — wire click handler on it
-      chart.setCardHtml()
+      chart.setCardSvg()
         .setCardDisplay([
           ['first name'],
           ['birthday', 'death'],
         ])
-        .setCardDim({ w: 180, h: 60, text_x: 10, text_y: 14, img_w: 0, img_h: 0, img_x: 0, img_y: 0 })
-        .setMiniTree(true)
+        .setCardDim({
+          w: 200, h: 70,
+          text_x: 10, text_y: 20,
+          img_w: 0, img_h: 0, img_x: 0, img_y: 0,
+        })
+        .setMiniTree(false)
         .setOnCardClick((_e: MouseEvent, d: f3.TreeDatum) => {
           const pk = d.data.id
           setSelectedPubkey((prev: string | null) => prev === pk ? null : pk)
         })
 
-      chart.updateTree({ initial: true })
+      chart
+        .setAncestryDepth(4)
+        .setProgenyDepth(4)
+        .updateTree({ initial: true, tree_position: 'fit' })
 
       chartRef.current = chart
     } catch (err) {
