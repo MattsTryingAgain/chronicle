@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import * as f3 from 'family-chart'
-import 'family-chart/dist/styles/family-chart.css'
+import 'family-chart/styles/family-chart.css'
 import { store } from '../lib/storage'
 import { traverseGraph } from '../lib/graph'
 import { resolveAllFields } from '../lib/confidence'
