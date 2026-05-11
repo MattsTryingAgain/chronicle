@@ -98,11 +98,15 @@ function assignGenerations(
       if (genMap.has(neighbour)) continue
       let delta = 0
       if (asSubject) {
-        if (rel === 'parent') delta = -1   // subject is parent → neighbour is child (lower gen)
-        else if (rel === 'child') delta = 1 // subject is child → neighbour is parent (higher gen)
-      } else {
-        if (rel === 'parent') delta = 1    // traversing inverse of parent edge → go up
+        // Edge stored as "subject has relationship rel to neighbour"
+        // 'parent': subject IS the parent, so neighbour is the child → neighbour is one gen BELOW root
+        if (rel === 'parent') delta = 1
+        // 'child': subject IS the child, so neighbour is the parent → neighbour is one gen ABOVE root
         else if (rel === 'child') delta = -1
+      } else {
+        // Traversing the reverse direction of the same edge
+        if (rel === 'parent') delta = -1
+        else if (rel === 'child') delta = 1
       }
       genMap.set(neighbour, currentGen + delta)
       queue.push(neighbour)
