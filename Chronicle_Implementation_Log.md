@@ -846,3 +846,30 @@ The pure functions `normaliseEdges`, `assignGenerations`, `computeLayout` live i
 ### Gotcha #35 — Two relationship claims per user-facing relationship
 
 Every relationship the user sees in the UI is stored as TWO Nostr claims — one in each direction. `AddPersonModal.handleSave` writes both. `traverseGraph` returns both. The tree view's `normaliseEdges` step is responsible for collapsing them back into one canonical edge per unordered pair. **Do not rely on traversal output being deduplicated** — collapse them yourself.
+
+### Family tree — children grouped under their actual parents (v1.0.48)
+
+**Problem reported on v1.0.47:** Stephen and Eddie are both children of Ralph + Diane, while Maria is a child of Bill + Patricia. The tree placed Stephen between Bill and Diane, making it look as though Stephen was a child of Bill+Patricia and that Stephen + Maria were siblings who had married each other.
+
+**Root cause:** The v1.0.47 layout did the right thing per-slot (each slot was sorted by its parent x), but then placed slots at uniform `H_GAP` intervals. When Stephen and Eddie shared parents at one side and Maria's parents were on the other side, Eddie got pushed to the centre of the row because there was no notion of "siblings stay together as a group".
+
+**Fix in `src/components/FamilyTreeView.layout.ts` — `computeLayout` rewritten as a group-based placement:**
+
+1. **Top-down BFS placement** (was bottom-up): place generations from oldest to youngest, so by the time we lay out a row, every parent is already positioned.
+2. **Sibling grouping by parent-set**: every slot in a generation is grouped by its parent-set key (the sorted union of its members' parents). Slots that share parents become one group, laid out adjacently.
+3. **Per-group target x**: each group's preferred centre is the average x of its parents. Groups are sorted left-to-right by that target.
+4. **Overlap resolution**: groups are placed left-to-right; if a later group's target would overlap its predecessor, it's pushed right. A pull-back pass then tries to slide earlier groups rightward (toward but not past their own targets) so the row is centred more naturally.
+5. **Larger inter-group gap** (`INTER_GROUP_GAP = H_GAP + 24`) makes it visually obvious where one sibling cluster ends and another begins.
+6. **Root anchor**: after all generations are placed, the whole tree is shifted horizontally so the root sits at x = 0. The viewport auto-fit then centres it.
+
+**Two regression tests added in `src/lib/familyTreeLayout.test.ts`:**
+- "Stephen and Eddie sit on the same side as Ralph + Diane; Maria sits under Bill + Patricia" — asserts that Stephen and Eddie are closer to Ralph+Diane's midpoint than to Bill+Patricia's midpoint, and that Maria is closer to Bill+Patricia's midpoint than Ralph+Diane's. This is the exact regression scenario from the screenshot.
+- "grandparents row: couples sit adjacent, not interleaved" — asserts that the within-couple distance is smaller than every cross-couple distance.
+
+**Tests:** 633/633 passing (was 631 + 2 new).
+**TypeScript:** clean.
+**Build:** clean.
+
+### Gotcha #36 — Sibling groups, not equal spacing
+
+When laying out a row, **siblings (slots with the same parents) must be placed adjacently and centred over those parents, NOT spaced evenly with everyone else in the row**. Equal H_GAP spacing means a sibling whose siblings are clustered tightly will drift away from them if the row contains other slots with different parents. If you ever change the layout algorithm, the regression test "Stephen and Eddie sit on the same side as Ralph + Diane" is your guard.

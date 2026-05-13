@@ -252,3 +252,122 @@ describe('FamilyTreeView layout — end-to-end family', () => {
     expect(norm.parentChild).toHaveLength(4)
   })
 })
+
+// ─── Regression: in-row ordering ──────────────────────────────────────────────
+//
+// Real bug from the screenshot at v1.0.47: Stephen and Eddie are both children
+// of Ralph + Diane; Maria is a child of Bill + Patricia. Matt's parents are
+// Stephen and Maria. The bottom-up layout was placing Stephen between Bill and
+// Diane (because Stephen had children, so the algorithm centred him over them),
+// which made it look like Stephen had Bill and Patricia as parents rather than
+// Ralph and Diane.
+
+describe('FamilyTreeView layout — in-row ordering by parent x', () => {
+  it("Stephen and Eddie sit on the same side as Ralph + Diane; Maria sits under Bill + Patricia", () => {
+    // Generation -2: Ralph + Diane (couple), Bill + Patricia (couple)
+    // Generation -1: Stephen (child of Ralph + Diane), Eddie (child of Ralph + Diane),
+    //                Maria (child of Bill + Patricia)
+    // Generation  0: Matt (child of Stephen + Maria)
+    const Ralph    = 'np_ralph'
+    const Diane    = 'np_diane'
+    const Bill     = 'np_bill'
+    const Patricia = 'np_patricia'
+    const Stephen2 = 'np_stephen'
+    const Eddie    = 'np_eddie'
+    const Maria    = 'np_maria'
+    const Matt2    = 'np_matt'
+
+    // Spouses on the grandparent generation
+    addBoth(Ralph, Diane, 'spouse')
+    addBoth(Bill,  Patricia, 'spouse')
+
+    // Grandparents → parents
+    addBoth(Stephen2, Ralph,    'child')
+    addBoth(Stephen2, Diane,    'child')
+    addBoth(Eddie,    Ralph,    'child')
+    addBoth(Eddie,    Diane,    'child')
+    addBoth(Maria,    Bill,     'child')
+    addBoth(Maria,    Patricia, 'child')
+
+    // Parents → Matt
+    addBoth(Matt2, Stephen2, 'child')
+    addBoth(Matt2, Maria,    'child')
+
+    const { nodes, edges } = traverseGraph(Matt2)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Matt2, nodes, norm.parentChild, norm.spouses)
+    const pos  = __test_computeLayout(nodes, gens, norm.parentChild, norm.spouses, Matt2)
+
+    // All four grandparents at the top row
+    const grandparentY = pos.get(Ralph)!.y
+    expect(pos.get(Diane)!.y).toBe(grandparentY)
+    expect(pos.get(Bill)!.y).toBe(grandparentY)
+    expect(pos.get(Patricia)!.y).toBe(grandparentY)
+
+    // Parents row below the grandparents
+    const parentY = pos.get(Stephen2)!.y
+    expect(parentY).toBeGreaterThan(grandparentY)
+    expect(pos.get(Maria)!.y).toBe(parentY)
+    expect(pos.get(Eddie)!.y).toBe(parentY)
+
+    // Matt below the parents
+    expect(pos.get(Matt2)!.y).toBeGreaterThan(parentY)
+
+    // The key invariant: Stephen must sit on the SAME SIDE as Ralph + Diane,
+    // and Maria must sit on the SAME SIDE as Bill + Patricia. Specifically,
+    // Stephen's x should be between Ralph's x and Diane's x — i.e., his x
+    // must be closer to his actual parents' midpoint than to Bill+Patricia's
+    // midpoint.
+    const ralphDianeMid = (pos.get(Ralph)!.x + pos.get(Diane)!.x) / 2
+    const billPatMid    = (pos.get(Bill)!.x + pos.get(Patricia)!.x) / 2
+    const stephenX      = pos.get(Stephen2)!.x
+    const mariaX        = pos.get(Maria)!.x
+
+    expect(Math.abs(stephenX - ralphDianeMid)).toBeLessThan(Math.abs(stephenX - billPatMid))
+    expect(Math.abs(mariaX   - billPatMid))   .toBeLessThan(Math.abs(mariaX   - ralphDianeMid))
+
+    // Eddie must also be near Ralph + Diane, not under Bill + Patricia.
+    const eddieX = pos.get(Eddie)!.x
+    expect(Math.abs(eddieX - ralphDianeMid)).toBeLessThan(Math.abs(eddieX - billPatMid))
+  })
+
+  it('grandparents row: couples sit adjacent, not interleaved', () => {
+    // Same fixture as above but only asserting on grandparent row layout.
+    const Ralph    = 'np_ralph'
+    const Diane    = 'np_diane'
+    const Bill     = 'np_bill'
+    const Patricia = 'np_patricia'
+    const Stephen2 = 'np_stephen'
+    const Maria    = 'np_maria'
+    const Matt2    = 'np_matt'
+
+    addBoth(Ralph, Diane, 'spouse')
+    addBoth(Bill, Patricia, 'spouse')
+    addBoth(Stephen2, Ralph, 'child')
+    addBoth(Stephen2, Diane, 'child')
+    addBoth(Maria, Bill, 'child')
+    addBoth(Maria, Patricia, 'child')
+    addBoth(Matt2, Stephen2, 'child')
+    addBoth(Matt2, Maria, 'child')
+
+    const { nodes, edges } = traverseGraph(Matt2)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Matt2, nodes, norm.parentChild, norm.spouses)
+    const pos  = __test_computeLayout(nodes, gens, norm.parentChild, norm.spouses, Matt2)
+
+    // Ralph and Diane should be next to each other (couple)
+    const ralphDianeDist = Math.abs(pos.get(Ralph)!.x - pos.get(Diane)!.x)
+    const billPatDist    = Math.abs(pos.get(Bill)!.x - pos.get(Patricia)!.x)
+
+    // A couple is rendered NODE_W + COUPLE_GAP apart.
+    // Any cross-couple distance must be larger than the within-couple distance.
+    const ralphBillDist     = Math.abs(pos.get(Ralph)!.x - pos.get(Bill)!.x)
+    const dianePatriciaDist = Math.abs(pos.get(Diane)!.x - pos.get(Patricia)!.x)
+    const dianeBillDist     = Math.abs(pos.get(Diane)!.x - pos.get(Bill)!.x)
+
+    expect(ralphBillDist).toBeGreaterThan(ralphDianeDist)
+    expect(dianePatriciaDist).toBeGreaterThan(ralphDianeDist)
+    expect(dianeBillDist).toBeGreaterThan(ralphDianeDist)
+    expect(dianeBillDist).toBeGreaterThan(billPatDist)
+  })
+})
