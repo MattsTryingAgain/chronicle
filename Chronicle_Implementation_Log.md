@@ -800,3 +800,49 @@ Comparable to Stage 4 in complexity. The platform abstraction layer is the most 
 **Resolution:** Install v1.0.34 manually (one last time), then test the in-app updater for v1.0.35. The `app-update.yml` baked into v1.0.34 is correct and should allow the updater to work going forward.
 
 **Also fixed:** The flatten step in `release.yml` was too greedy — it was picking up `Chronicle.exe` and `elevate.exe` from `win-unpacked/` and uploading them to the release. Fixed the find pattern to only match `*-Setup-*` installer files and `latest*.yml`, excluding unpacked directory contents.
+
+### Family tree rewrite — children below parents, multiple relationships per save (v1.0.47)
+
+**Problem:** Despite several attempts, the family tree was not reliably showing children below parents, parent→child connector lines were sometimes missing, and adding multiple children to a parent required several separate modal sessions because the modal supported only one relationship per save. The relationship picker UI was also worded so that adding "Stephen is the parent of Matt" required the user to mentally invert the wording.
+
+**Root cause:**
+1. **AddPersonModal supported a single relationship per save.** Adding a parent with three existing children required four modal openings.
+2. **The relationship label was ambiguous.** UI read "[Other] is the … of [Subject]" with Subject = new person. Default state was `'parent'`, which combined with the inverted wording made mis-stores easy.
+3. **Layout maths lived inline in the React component** with no unit tests. Any regression in edge handling or generation BFS was invisible until the user noticed broken visuals.
+
+**Fix:**
+
+1. **`src/components/AddPersonModal.tsx` — full rewrite of the relationship section.**
+   - Multiple relationship rows are now added in a single save. Each row has its own person picker, relationship type, and metadata.
+   - Wording is now subject-first: "**[new person]** is the … of [existing person]" with a "Will save:" preview before commit.
+   - Storage invariant documented in plain English at the top of the file (subject IS rel OF related, stored as TWO mirrored claims).
+   - Default relationship type for new rows is `'child'` (the most common case when adding ancestors: the new person is a child of someone already in the tree).
+   - In edit mode, existing relationships are listed with a remove (✕) button, and new rows can still be added in the same save.
+
+2. **`src/components/FamilyTreeView.tsx` — full rewrite of layout and rendering.**
+   - Edges are normalised first: every parent/child claim pair becomes a single directed `parent → child` edge; every spouse claim pair becomes one undirected spouse edge.
+   - Generations are assigned by strict BFS from root using only parent-child deltas (parents at gen-1, children at gen+1) and spouse equality. Y position is `gen × (NODE_H + V_GAP)` — children are therefore mathematically guaranteed to be below parents.
+   - One elbow connector is drawn per normalised parent-child edge — no longer relying on bidirectional traversal output to be deduplicated by the renderer.
+
+3. **`src/components/FamilyTreeView.layout.ts` — new pure module.**
+   - Exports `normaliseEdges`, `assignGenerations`, `computeLayout` plus `NODE_W`/`NODE_H` and friends.
+   - Re-exports the same functions prefixed with `__test_` for the test suite.
+   - Pure functions only, no React, no D3.
+
+4. **`src/lib/familyTreeLayout.test.ts` — new test file, 15 tests.**
+   - Generation tests: root alone, one parent, two parents, one child, multiple children, three-generation chain, spouse-shares-generation.
+   - Position tests: parent above child, multiple children share a row, two parents share a row, spouses on same row but distinct x.
+   - Edge normalisation: forward+inverse pair collapses to one parent-child edge; multiple distinct pairs preserved; spouse pair collapses to one edge.
+   - End-to-end: Matt with two parents and two children produces three distinct y rows and exactly four parent-child edges.
+
+**Tests:** 631/631 passing (was 616/616 + 15 new).
+**TypeScript:** clean.
+**Build:** clean (Vite reports the same pre-existing harmless warnings about `node:crypto` and `tweetnacl-util` per gotcha #25).
+
+### Gotcha #34 — Layout maths must stay in `FamilyTreeView.layout.ts`
+
+The pure functions `normaliseEdges`, `assignGenerations`, `computeLayout` live in `src/components/FamilyTreeView.layout.ts` and are unit-tested in `src/lib/familyTreeLayout.test.ts`. If a future change needs to alter how the tree positions nodes or which edges count for layout, **change the layout module and add a failing test first**, then make it pass. Do not move this logic back inline into the React component — there will be no way to verify regressions otherwise.
+
+### Gotcha #35 — Two relationship claims per user-facing relationship
+
+Every relationship the user sees in the UI is stored as TWO Nostr claims — one in each direction. `AddPersonModal.handleSave` writes both. `traverseGraph` returns both. The tree view's `normaliseEdges` step is responsible for collapsing them back into one canonical edge per unordered pair. **Do not rely on traversal output being deduplicated** — collapse them yourself.

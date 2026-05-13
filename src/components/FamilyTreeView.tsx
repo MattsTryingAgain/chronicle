@@ -1,27 +1,49 @@
 /**
- * FamilyTreeView — D3 generational layout
+ * FamilyTreeView — generational family tree.
  *
- * Layout: nodes in generation rows, top = oldest ancestors.
- * Connectors: one elbow per parent→child edge, drawn from the
- * bottom-centre of the parent directly to the top-centre of the child.
- * No shared bars, no midpoint grouping — just what the data says.
+ * GUARANTEES (what this view must always do):
+ *   1. Children sit BELOW their parents. Always. Y position is determined by
+ *      generation, which is computed strictly from parent/child relationships.
+ *   2. Every parent→child relationship has a visible connector line.
+ *   3. Spouses sit at the same level, connected by a horizontal line.
+ *   4. Multiple children of the same parent all sit at the same generation
+ *      below that parent, each with their own connector.
+ *
+ * ALGORITHM:
+ *   1. Normalise edges: convert every parent/child claim into a single
+ *      directed (parent → child) edge. Dedupe by pair. Spouses become a
+ *      single undirected spouse edge per pair. Siblings are ignored for
+ *      layout (sibling relationship is implicit when two nodes share a
+ *      parent; we still draw a sibling line if no shared parent exists).
+ *   2. Generations: BFS from root. From the root, every ancestor path
+ *      (root has a parent X) puts X at gen-1. Every descendant path puts
+ *      that node at gen+1. Spouses share the same generation.
+ *   3. Layout per generation: pack couples adjacent, then order rows by
+ *      the average X of any already-placed children.
+ *   4. Render: parent→child connectors are elbow paths from the bottom of
+ *      the parent card to the top of the child card. Spouse connectors are
+ *      short horizontal lines. Sibling-only edges (no shared parent) are
+ *      dashed horizontal lines.
+ *
+ * NOTE: `traverseGraph` returns BOTH directions of every stored
+ * relationship (forward + inverse). This view treats each unordered pair
+ * exactly once.
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import * as d3 from 'd3'
 import { store } from '../lib/storage'
 import { traverseGraph } from '../lib/graph'
-import type { GraphEdge } from '../lib/graph'
 import { resolveAllFields } from '../lib/confidence'
 import type { Person } from '../types/chronicle'
+import {
+  NODE_W, NODE_H,
+  normaliseEdges,
+  assignGenerations,
+  computeLayout,
+} from './FamilyTreeView.layout'
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const NODE_W    = 180
-const NODE_H    = 60
-const H_GAP     = 48
-const V_GAP     = 100
-const CORNER_R  = 8
+const CORNER_R = 10
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -70,160 +92,6 @@ function buildNodeData(pubkey: string): NodeData {
   }
 }
 
-// ─── Generation assignment ────────────────────────────────────────────────────
-// BFS from root. parent edge = go up one generation (-1), child edge = go down (+1).
-// Both forward and inverse edges are stored; we handle both directions correctly.
-
-function assignGenerations(
-  rootPubkey: string,
-  nodes: string[],
-  edges: GraphEdge[],
-): Map<string, number> {
-  // Build adjacency list
-  const adj = new Map<string, Array<{ neighbour: string; rel: string; asSubject: boolean }>>()
-  for (const n of nodes) adj.set(n, [])
-  for (const e of edges) {
-    adj.get(e.fromPubkey)?.push({ neighbour: e.toPubkey, rel: e.relationship, asSubject: true })
-    adj.get(e.toPubkey)?.push({ neighbour: e.fromPubkey, rel: e.relationship, asSubject: false })
-  }
-
-  const genMap = new Map<string, number>()
-  genMap.set(rootPubkey, 0)
-  const queue = [rootPubkey]
-
-  while (queue.length > 0) {
-    const current = queue.shift()!
-    const currentGen = genMap.get(current)!
-    for (const { neighbour, rel, asSubject } of adj.get(current) ?? []) {
-      if (genMap.has(neighbour)) continue
-      let delta = 0
-      if (asSubject) {
-        // Edge stored as "subject has relationship rel to neighbour"
-        // 'parent': subject IS the parent, so neighbour is the child → neighbour is one gen BELOW root
-        if (rel === 'parent') delta = 1
-        // 'child': subject IS the child, so neighbour is the parent → neighbour is one gen ABOVE root
-        else if (rel === 'child') delta = -1
-      } else {
-        // Traversing the reverse direction of the same edge
-        if (rel === 'parent') delta = -1
-        else if (rel === 'child') delta = 1
-      }
-      genMap.set(neighbour, currentGen + delta)
-      queue.push(neighbour)
-    }
-  }
-  for (const n of nodes) { if (!genMap.has(n)) genMap.set(n, 0) }
-  return genMap
-}
-
-// ─── Layout ───────────────────────────────────────────────────────────────────
-// Place nodes in horizontal rows by generation.
-// Couples (spouse pairs) sit adjacent. Ordering within a row:
-// couples are sorted by the average x-position of their children in the row
-// below, so parents sit directly above their own children.
-
-function computeLayout(
-  nodes: string[],
-  genMap: Map<string, number>,
-  edges: GraphEdge[],
-  rootPubkey: string,
-): Map<string, { x: number; y: number }> {
-  // Build lookup maps
-  const spouseOf   = new Map<string, string>()
-  const childrenOf = new Map<string, Set<string>>() // pk → children pubkeys
-  const parentsOf  = new Map<string, Set<string>>() // pk → parent pubkeys
-
-  for (const n of nodes) {
-    childrenOf.set(n, new Set())
-    parentsOf.set(n, new Set())
-  }
-  for (const e of edges) {
-    if (e.relationship === 'spouse') {
-      spouseOf.set(e.fromPubkey, e.toPubkey)
-      spouseOf.set(e.toPubkey, e.fromPubkey)
-    } else if (e.relationship === 'parent') {
-      childrenOf.get(e.fromPubkey)?.add(e.toPubkey)
-      parentsOf.get(e.toPubkey)?.add(e.fromPubkey)
-    } else if (e.relationship === 'child') {
-      childrenOf.get(e.toPubkey)?.add(e.fromPubkey)
-      parentsOf.get(e.fromPubkey)?.add(e.toPubkey)
-    }
-  }
-
-  // Group by generation
-  const byGen = new Map<number, string[]>()
-  for (const n of nodes) {
-    const g = genMap.get(n) ?? 0
-    if (!byGen.has(g)) byGen.set(g, [])
-    byGen.get(g)!.push(n)
-  }
-
-  const gens = Array.from(byGen.keys()).sort((a, b) => a - b)
-  const minGen = gens[0] ?? 0
-  const posMap = new Map<string, { x: number; y: number }>()
-
-  // Process bottom-up so children are placed before parents.
-  // That way parents can sort themselves above their children.
-  for (const gen of [...gens].reverse()) {
-    const members = byGen.get(gen)!
-    const yPos = (gen - minGen) * (NODE_H + V_GAP)
-
-    // Build couple slots
-    const slots: string[][] = []
-    const placed = new Set<string>()
-    for (const pk of members) {
-      if (placed.has(pk)) continue
-      const spouse = spouseOf.get(pk)
-      if (spouse && members.includes(spouse) && !placed.has(spouse)) {
-        // Root always goes first in couple
-        slots.push(pk === rootPubkey ? [pk, spouse] : [pk, spouse])
-        placed.add(pk); placed.add(spouse)
-      } else {
-        slots.push([pk])
-        placed.add(pk)
-      }
-    }
-
-    // Sort slots by average x of their children (already placed below)
-    const avgChildX = (slot: string[]): number | null => {
-      const xs: number[] = []
-      for (const pk of slot) {
-        for (const child of childrenOf.get(pk) ?? []) {
-          const pos = posMap.get(child)
-          if (pos) xs.push(pos.x)
-        }
-      }
-      return xs.length > 0 ? xs.reduce((a, b) => a + b, 0) / xs.length : null
-    }
-
-    const withKids    = slots.filter(s => avgChildX(s) !== null).sort((a, b) => (avgChildX(a) ?? 0) - (avgChildX(b) ?? 0))
-    const withoutKids = slots.filter(s => avgChildX(s) === null)
-    const ordered     = [...withKids, ...withoutKids]
-
-    // Calculate total row width
-    let totalWidth = 0
-    for (const slot of ordered) {
-      if (totalWidth > 0) totalWidth += H_GAP
-      totalWidth += slot.length === 2 ? NODE_W * 2 + H_GAP / 2 : NODE_W
-    }
-
-    let curX = -totalWidth / 2 + NODE_W / 2
-    for (const slot of ordered) {
-      if (slot.length === 2) {
-        posMap.set(slot[0], { x: curX, y: yPos })
-        posMap.set(slot[1], { x: curX + NODE_W + H_GAP / 2, y: yPos })
-        curX += NODE_W * 2 + H_GAP / 2 + H_GAP
-      } else {
-        posMap.set(slot[0], { x: curX, y: yPos })
-        curX += NODE_W + H_GAP
-      }
-    }
-
-    void parentsOf // suppress unused warning
-  }
-
-  return posMap
-}
 
 // ─── Action Panel ─────────────────────────────────────────────────────────────
 
@@ -232,12 +100,13 @@ interface ActionPanelProps {
   onClose: () => void
   onEdit: (pubkey: string) => void
   onViewInList: (pubkey: string) => void
+  onMakeRoot: (pubkey: string) => void
 }
 
-function ActionPanel({ pubkey, onClose, onEdit, onViewInList }: ActionPanelProps) {
+function ActionPanel({ pubkey, onClose, onEdit, onViewInList, onMakeRoot }: ActionPanelProps) {
   const person = store.getPerson(pubkey)
   if (!person) return null
-  const initials = person.displayName.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()
+  const initials = person.displayName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
   const claims = store.getClaimsForPerson(pubkey)
   const endorsements = store.getAllEndorsements()
   const resolutions = resolveAllFields(claims, endorsements)
@@ -248,8 +117,7 @@ function ActionPanel({ pubkey, onClose, onEdit, onViewInList }: ActionPanelProps
   return (
     <div style={{
       position: 'absolute', top: 0, right: 0,
-      width: 280, height: '100%',
-      background: '#fff',
+      width: 280, height: '100%', background: '#fff',
       borderLeft: '1px solid var(--border-soft)',
       boxShadow: '-4px 0 24px rgba(15,30,53,0.08)',
       display: 'flex', flexDirection: 'column', zIndex: 10,
@@ -268,17 +136,17 @@ function ActionPanel({ pubkey, onClose, onEdit, onViewInList }: ActionPanelProps
         </div>
       </div>
       <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, flex: 1, overflowY: 'auto' }}>
-        <ActionButton icon="✏️" label="Edit information"    description="Update facts, dates and relationships" onClick={() => onEdit(pubkey)} />
-        <ActionButton icon="📋" label="View full profile"   description="See all claims and conflict history"   onClick={() => onViewInList(pubkey)} />
+        <ActionButton icon="✏️" label="Edit information"  description="Update facts, dates and relationships" onClick={() => onEdit(pubkey)} />
+        <ActionButton icon="📋" label="View full profile" description="See all claims and conflict history"   onClick={() => onViewInList(pubkey)} />
         <div style={{ borderTop: '1px solid var(--border-soft)', margin: '4px 0' }} />
-        <ActionButton icon="🖼"  label="Photos & media"     description="View and add photos for this person"   onClick={() => {}} comingSoon />
-        <ActionButton icon="📖" label="Stories"             description="Personal stories and memories"         onClick={() => {}} comingSoon />
-        <ActionButton icon="📄" label="Documents"           description="Birth certificates, records and sources" onClick={() => {}} comingSoon />
-        <ActionButton icon="🌍" label="Timeline"            description="Life events on a timeline"             onClick={() => {}} comingSoon />
+        <ActionButton icon="🖼"  label="Photos & media"    description="View and add photos for this person"   onClick={() => {}} comingSoon />
+        <ActionButton icon="📖" label="Stories"            description="Personal stories and memories"         onClick={() => {}} comingSoon />
+        <ActionButton icon="📄" label="Documents"          description="Birth certificates, records and sources" onClick={() => {}} comingSoon />
+        <ActionButton icon="🌍" label="Timeline"           description="Life events on a timeline"             onClick={() => {}} comingSoon />
       </div>
       <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-soft)' }}>
         <button className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center' }}
-          onClick={() => { onViewInList(pubkey); onClose() }}>
+          onClick={() => { onMakeRoot(pubkey); onClose() }}>
           Make this person the tree root
         </button>
       </div>
@@ -335,6 +203,7 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
   const [selectedPubkey, setSelectedPubkey] = useState<string | null>(null)
 
   const handleClosePanel = useCallback(() => setSelectedPubkey(null), [])
+  const handleMakeRoot   = useCallback((pk: string) => onSelectPerson?.(pk), [onSelectPerson])
 
   const draw = useCallback(() => {
     if (!svgRef.current || !containerRef.current) return
@@ -356,82 +225,55 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
       .on('zoom', event => g.attr('transform', event.transform))
     svg.call(zoom)
 
-    // ── Layout ────────────────────────────────────────────────────────────────
-    const genMap = assignGenerations(rootPubkey, nodes, edges)
-    const posMap = computeLayout(nodes, genMap, edges, rootPubkey)
+    // ── Edge normalisation & layout ────────────────────────────────────────────
+    const { parentChild, spouses, siblings } = normaliseEdges(edges)
+    const genMap = assignGenerations(rootPubkey, nodes, parentChild, spouses)
+    const posMap = computeLayout(nodes, genMap, parentChild, spouses, rootPubkey)
 
     const nodeMap = new Map<string, NodeData>()
     for (const pk of nodes) {
       const nd = buildNodeData(pk)
-      const pos = posMap.get(pk) ?? { x: 0, y: 0 }
-      nd.x = pos.x; nd.y = pos.y
+      const p = posMap.get(pk) ?? { x: 0, y: 0 }
+      nd.x = p.x; nd.y = p.y
       nodeMap.set(pk, nd)
     }
 
-    // ── Edges ─────────────────────────────────────────────────────────────────
-    // Rule: one line per edge. Spouse = horizontal between nodes.
-    // Parent→child = elbow from bottom of parent to top of child.
-    // Sibling edges skipped — siblings are connected through shared parents.
-    // Duplicate parent/child edges (both directions stored) are deduplicated
-    // by only drawing when fromNode is above toNode (y is lower number).
+    // ── Defs ───────────────────────────────────────────────────────────────────
+    const defs = svg.append('defs')
+    defs.append('filter').attr('id', 'node-shadow')
+      .append('feDropShadow')
+      .attr('dx', 0).attr('dy', 1).attr('stdDeviation', 3)
+      .attr('flood-color', 'rgba(15,30,53,0.12)')
 
-    const edgeGroup = g.append('g')
-    const drawnParentEdges = new Set<string>() // avoid drawing A→B and B→A both
+    // ── Edges ──────────────────────────────────────────────────────────────────
+    const edgeGroup = g.append('g').attr('class', 'edges')
+    const STROKE = '#c9a96e'
+    const STROKE_SENSITIVE = '#c5b89a'
 
-    for (const edge of edges) {
-      if (edge.relationship === 'sibling') continue
+    // Parent → child: elbow connector from bottom of parent to top of child.
+    for (const e of parentChild) {
+      const pNode = nodeMap.get(e.parent)
+      const cNode = nodeMap.get(e.child)
+      if (!pNode || !cNode) continue
 
-      const fromNode = nodeMap.get(edge.fromPubkey)
-      const toNode   = nodeMap.get(edge.toPubkey)
-      if (!fromNode || !toNode) continue
+      const x1 = pNode.x
+      const y1 = pNode.y + NODE_H / 2
+      const x2 = cNode.x
+      const y2 = cNode.y - NODE_H / 2
 
-      if (edge.relationship === 'spouse') {
-        // Only draw once per pair
-        const key = [edge.fromPubkey, edge.toPubkey].sort().join('|')
-        if (drawnParentEdges.has(key)) continue
-        drawnParentEdges.add(key)
+      // If child is somehow not below parent (shouldn't happen with correct gens),
+      // skip drawing rather than producing weird visual.
+      if (y2 <= y1) continue
 
-        const status = edge.meta?.status
-        const dash   = (status === 'married') ? undefined : '6,3'
-        const stroke = edge.sensitive ? '#c5b89a' : '#c9a96e'
-        const x1 = fromNode.x + (fromNode.x <= toNode.x ? NODE_W / 2 : -NODE_W / 2)
-        const x2 = toNode.x   + (fromNode.x <= toNode.x ? -NODE_W / 2 : NODE_W / 2)
-        const y  = (fromNode.y + toNode.y) / 2
-        edgeGroup.append('line')
-          .attr('x1', x1).attr('y1', y).attr('x2', x2).attr('y2', y)
-          .attr('stroke', stroke).attr('stroke-dasharray', dash ?? null)
-          .attr('stroke-width', 1.5).attr('opacity', 0.7)
-        continue
-      }
-
-      // Parent→child: figure out which is parent, which is child
-      let parentNode: NodeData, childNode: NodeData
-      if (edge.relationship === 'parent') {
-        parentNode = fromNode; childNode = toNode
-      } else {
-        // 'child' edge: subject (from) is child, to is parent
-        parentNode = toNode; childNode = fromNode
-      }
-
-      // Deduplicate — only draw if we haven't already drawn this parent→child pair
-      const edgeKey = `${parentNode.pubkey}→${childNode.pubkey}`
-      if (drawnParentEdges.has(edgeKey)) continue
-      drawnParentEdges.add(edgeKey)
-
-      // Only draw downward connectors
-      if (parentNode.y >= childNode.y) continue
-
-      const x1 = parentNode.x
-      const y1 = parentNode.y + NODE_H / 2
-      const x2 = childNode.x
-      const y2 = childNode.y - NODE_H / 2
       const midY = (y1 + y2) / 2
-      const stroke = '#c9a96e'
+      const stroke = e.sensitive ? STROKE_SENSITIVE : STROKE
+      const dash = e.sensitive ? '4,4' : null
 
       if (Math.abs(x1 - x2) < 2) {
         edgeGroup.append('line')
           .attr('x1', x1).attr('y1', y1).attr('x2', x2).attr('y2', y2)
           .attr('stroke', stroke).attr('stroke-width', 1.5)
+          .attr('stroke-dasharray', dash)
       } else {
         const dx = x2 > x1 ? 1 : -1
         const cr = Math.min(CORNER_R, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2)
@@ -444,18 +286,58 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
             `Q ${x2} ${midY} ${x2} ${midY + cr}`,
             `L ${x2} ${y2}`,
           ].join(' '))
-          .attr('fill', 'none').attr('stroke', stroke).attr('stroke-width', 1.5)
+          .attr('fill', 'none')
+          .attr('stroke', stroke).attr('stroke-width', 1.5)
+          .attr('stroke-dasharray', dash)
       }
     }
 
-    // ── Nodes ─────────────────────────────────────────────────────────────────
-    const defs = svg.append('defs')
-    defs.append('filter').attr('id', 'node-shadow')
-      .append('feDropShadow')
-      .attr('dx', 0).attr('dy', 1).attr('stdDeviation', 3)
-      .attr('flood-color', 'rgba(15,30,53,0.10)')
+    // Spouses: short horizontal line between cards on same row.
+    for (const s of spouses) {
+      const a = nodeMap.get(s.a)
+      const b = nodeMap.get(s.b)
+      if (!a || !b) continue
+      const leftNode = a.x <= b.x ? a : b
+      const rightNode = a.x <= b.x ? b : a
+      const x1 = leftNode.x + NODE_W / 2
+      const x2 = rightNode.x - NODE_W / 2
+      const y  = (leftNode.y + rightNode.y) / 2
+      const dash = (s.status && s.status !== 'married') ? '6,3'
+                 : s.sensitive ? '4,4'
+                 : null
+      edgeGroup.append('line')
+        .attr('x1', x1).attr('y1', y).attr('x2', x2).attr('y2', y)
+        .attr('stroke', s.sensitive ? STROKE_SENSITIVE : STROKE)
+        .attr('stroke-dasharray', dash)
+        .attr('stroke-width', 1.5).attr('opacity', 0.85)
+    }
 
-    const nodeGroup = g.append('g')
+    // Siblings: only draw if no shared parent exists (otherwise the parent connectors already show the relation).
+    const childParents = new Map<string, Set<string>>()
+    for (const e of parentChild) {
+      if (!childParents.has(e.child)) childParents.set(e.child, new Set())
+      childParents.get(e.child)!.add(e.parent)
+    }
+    for (const s of siblings) {
+      const pa = childParents.get(s.a) ?? new Set()
+      const pb = childParents.get(s.b) ?? new Set()
+      let shared = false
+      for (const p of pa) if (pb.has(p)) { shared = true; break }
+      if (shared) continue
+      const a = nodeMap.get(s.a); const b = nodeMap.get(s.b)
+      if (!a || !b) continue
+      // Dashed horizontal line at midpoint
+      const x1 = Math.min(a.x, b.x) + NODE_W / 2
+      const x2 = Math.max(a.x, b.x) - NODE_W / 2
+      const y  = (a.y + b.y) / 2
+      edgeGroup.append('line')
+        .attr('x1', x1).attr('y1', y).attr('x2', x2).attr('y2', y)
+        .attr('stroke', STROKE).attr('stroke-dasharray', '4,3')
+        .attr('stroke-width', 1.2).attr('opacity', 0.6)
+    }
+
+    // ── Nodes ──────────────────────────────────────────────────────────────────
+    const nodeGroup = g.append('g').attr('class', 'nodes')
     const nodeElems = nodeGroup.selectAll<SVGGElement, NodeData>('g.node')
       .data(Array.from(nodeMap.values()), d => d.pubkey)
       .join('g').attr('class', 'node')
@@ -465,7 +347,6 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
         setSelectedPubkey(prev => prev === d.pubkey ? null : d.pubkey)
       })
 
-    // Card background
     nodeElems.append('rect')
       .attr('width', NODE_W).attr('height', NODE_H).attr('rx', 10)
       .attr('filter', 'url(#node-shadow)')
@@ -478,22 +359,19 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
       })
       .attr('stroke-width', d => d.pubkey === selectedPubkey || d.pubkey === rootPubkey ? 2 : 1)
 
-    // Living dot
     nodeElems.filter(d => d.isLiving)
       .append('circle')
       .attr('cx', NODE_W - 10).attr('cy', 10).attr('r', 3.5).attr('fill', '#4caf78')
 
-    // Name
     nodeElems.append('text')
-      .attr('x', NODE_W / 2).attr('y', 24)
+      .attr('x', NODE_W / 2).attr('y', 26)
       .attr('text-anchor', 'middle')
       .attr('font-size', 13).attr('font-family', 'Lora, Georgia, serif').attr('font-weight', '600')
       .attr('fill', d => d.pubkey === rootPubkey ? 'var(--gold-light)' : 'var(--navy)')
       .text(d => d.displayName.length > 22 ? d.displayName.slice(0, 20) + '…' : d.displayName)
 
-    // Dates
     nodeElems.append('text')
-      .attr('x', NODE_W / 2).attr('y', 42)
+      .attr('x', NODE_W / 2).attr('y', 44)
       .attr('text-anchor', 'middle')
       .attr('font-size', 10.5)
       .attr('fill', d => d.pubkey === rootPubkey ? 'rgba(201,169,110,0.8)' : 'var(--ink-muted)')
@@ -503,7 +381,7 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
         return ''
       })
 
-    // ── Auto-fit ──────────────────────────────────────────────────────────────
+    // ── Auto-fit ───────────────────────────────────────────────────────────────
     const allPos = Array.from(posMap.values())
     if (allPos.length > 0) {
       const xs = allPos.map(p => p.x)
@@ -531,7 +409,6 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {/* Toolbar */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 16, padding: '8px 16px',
         borderBottom: '1px solid var(--border-soft)', background: '#fff',
@@ -540,14 +417,14 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
         <span>{nodeCount} {nodeCount === 1 ? 'person' : 'people'}</span>
         {truncated && <span style={{ color: 'var(--gold)', fontWeight: 500 }}>⚠ Tree truncated — zoom out to see more</span>}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 16, alignItems: 'center', fontSize: 11 }}>
-          <LegendItem color="var(--gold)"  label="Married" />
-          <LegendItem color="var(--gold)"  dash="6,3" label="Partner / divorced" />
-          <LegendItem color="#c5b89a" dash="4,4" label="Sensitive" />
+          <LegendItem color="var(--gold)" label="Parent / child" />
+          <LegendItem color="var(--gold)" label="Married spouse" />
+          <LegendItem color="var(--gold)" dash="6,3" label="Partner / divorced" />
+          <LegendItem color="#c5b89a"    dash="4,4" label="Sensitive" />
         </div>
         <span style={{ color: 'var(--border)', fontSize: 11 }}>Scroll to zoom · Drag to pan · Click to select</span>
       </div>
 
-      {/* Canvas */}
       <div ref={containerRef} style={{ flex: 1, position: 'relative', overflow: 'hidden', background: 'var(--cream)' }}>
         <svg ref={svgRef} style={{ width: '100%', height: '100%' }} />
         {selectedPubkey && (
@@ -556,6 +433,7 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
             onClose={handleClosePanel}
             onEdit={pk => { onEditPerson?.(pk); handleClosePanel() }}
             onViewInList={pk => { onSelectPerson?.(pk) }}
+            onMakeRoot={handleMakeRoot}
           />
         )}
       </div>

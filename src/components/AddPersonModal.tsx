@@ -2,14 +2,35 @@
  * AddPersonModal
  * Modes: 'self' | 'ancestor' | 'edit'
  *
- * Relationship semantics:
- *   RelationshipClaim { subjectPubkey, relatedPubkey, relationship }
- *   means: subjectPubkey IS relationship OF relatedPubkey
- *   e.g. subject=Matt, related=Stephen, relationship='child' → Matt is child of Stephen
+ * STORAGE INVARIANT — read carefully before touching:
  *
- * UI: "Who is [selected person] to [subject]?"
- *   Only parent / child / spouse / sibling — grandparent relationships
- *   emerge naturally from parent chains, no need to store explicitly.
+ *   A RelationshipClaim { subjectPubkey, relatedPubkey, relationship: REL }
+ *   means literally: "subjectPubkey is REL of relatedPubkey".
+ *
+ *   Example: { subject: Matt, related: Stephen, relationship: 'child' }
+ *            reads as "Matt is child of Stephen".
+ *
+ *   Every user-facing relationship is stored as TWO claims — forward and inverse:
+ *     subject=Matt    related=Stephen relationship='child'   ("Matt is child of Stephen")
+ *     subject=Stephen related=Matt    relationship='parent'  ("Stephen is parent of Matt")
+ *
+ * UI POLICY:
+ *
+ *   The dropdown selector lists EXISTING people. The relationship buttons
+ *   describe what the NEW (or edited) person is to that existing person.
+ *
+ *   So if Matt already exists, and the user is adding Stephen and clicks the
+ *   "Parent" button on a row where Matt is selected, the meaning is:
+ *
+ *       "Stephen is the parent of Matt"
+ *
+ *   This is the most natural reading: the verb is in subject-first order,
+ *   the new person is the subject, the existing person is the object.
+ *
+ *   In edit mode the "subject" is the person being edited. Same rule applies.
+ *
+ *   Multiple relationship rows can be added at once (a parent with several
+ *   existing children, or a child with several existing parents/siblings).
  */
 
 import { useState, useCallback } from 'react'
@@ -43,21 +64,20 @@ const FIELDS: FormField[] = [
   { field: 'occupation', labelKey: 'profile.addPerson.occupationLabel', placeholderKey: 'profile.addPerson.occupationPlaceholder' },
 ]
 
-// Only the four core types — grandparent/grandchild emerges from parent chains
-const RELATIONSHIP_OPTIONS: { value: RelationshipType; label: string; inverse: RelationshipType }[] = [
-  { value: 'parent',  label: 'Parent',  inverse: 'child'   },
-  { value: 'child',   label: 'Child',   inverse: 'parent'  },
+// Relationship buttons: what the SUBJECT is to the RELATED person.
+const REL_OPTIONS: { value: RelationshipType; label: string; inverse: RelationshipType }[] = [
+  { value: 'parent',  label: 'Parent',           inverse: 'child'   },
+  { value: 'child',   label: 'Child',            inverse: 'parent'  },
   { value: 'spouse',  label: 'Partner / Spouse', inverse: 'spouse'  },
-  { value: 'sibling', label: 'Sibling', inverse: 'sibling' },
+  { value: 'sibling', label: 'Sibling',          inverse: 'sibling' },
 ]
 
-function subjectRel(relatedIsTo: RelationshipType): RelationshipType {
-  return RELATIONSHIP_OPTIONS.find(o => o.value === relatedIsTo)?.inverse ?? relatedIsTo
+function inverseOf(rel: RelationshipType): RelationshipType {
+  return REL_OPTIONS.find(o => o.value === rel)?.inverse ?? rel
 }
 
-function relLabel(subjectRelationship: RelationshipType): string {
-  const opt = RELATIONSHIP_OPTIONS.find(o => o.value === subjectRel(subjectRelationship))
-  return opt?.label ?? subjectRelationship
+function relLabelForSubject(rel: RelationshipType): string {
+  return REL_OPTIONS.find(o => o.value === rel)?.label ?? rel
 }
 
 function bestExistingValue(claims: FactClaim[], field: FactField): string {
@@ -66,7 +86,25 @@ function bestExistingValue(claims: FactClaim[], field: FactField): string {
     .sort((a, b) => b.confidenceScore - a.confidenceScore)[0]?.value ?? ''
 }
 
-// ─── Relationship metadata form ───────────────────────────────────────────────
+// ─── Relationship row state ───────────────────────────────────────────────────
+
+interface RelRow {
+  id: string
+  relatedPubkey: string
+  relationship: RelationshipType   // what the SUBJECT is to the RELATED person
+  meta: RelationshipMeta
+}
+
+function newRelRow(): RelRow {
+  return {
+    id: `row-${Math.random().toString(36).slice(2, 10)}`,
+    relatedPubkey: '',
+    relationship: 'child',
+    meta: {},
+  }
+}
+
+// ─── Spouse / parent-child metadata pickers ───────────────────────────────────
 
 function SpouseMeta({ meta, onChange }: { meta: RelationshipMeta; onChange: (m: RelationshipMeta) => void }) {
   return (
@@ -74,16 +112,16 @@ function SpouseMeta({ meta, onChange }: { meta: RelationshipMeta; onChange: (m: 
       <div style={{ display: 'flex', gap: 8 }}>
         <div style={{ flex: 1 }}>
           <label style={{ fontSize: 12, color: 'var(--ink-muted)', display: 'block', marginBottom: 3 }}>
-            Start date (marriage or relationship began)
+            Start date
           </label>
           <input className="form-control form-control-sm"
-            placeholder="e.g. 1985 or June 1985"
+            placeholder="e.g. 1985"
             value={meta.startDate ?? ''}
             onChange={e => onChange({ ...meta, startDate: e.target.value || undefined })} />
         </div>
         <div style={{ flex: 1 }}>
           <label style={{ fontSize: 12, color: 'var(--ink-muted)', display: 'block', marginBottom: 3 }}>
-            End date (divorce, separation, or death)
+            End date
           </label>
           <input className="form-control form-control-sm"
             placeholder="leave blank if ongoing"
@@ -106,38 +144,18 @@ function SpouseMeta({ meta, onChange }: { meta: RelationshipMeta; onChange: (m: 
           ))}
         </div>
       </div>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <div style={{ flex: 1 }}>
-          <label style={{ fontSize: 12, color: 'var(--ink-muted)', display: 'block', marginBottom: 3 }}>
-            Children born from
-          </label>
-          <input className="form-control form-control-sm"
-            placeholder="year"
-            value={meta.childrenFromYear ?? ''}
-            onChange={e => onChange({ ...meta, childrenFromYear: e.target.value || undefined })} />
-        </div>
-        <div style={{ flex: 1 }}>
-          <label style={{ fontSize: 12, color: 'var(--ink-muted)', display: 'block', marginBottom: 3 }}>
-            Children born to
-          </label>
-          <input className="form-control form-control-sm"
-            placeholder="year"
-            value={meta.childrenToYear ?? ''}
-            onChange={e => onChange({ ...meta, childrenToYear: e.target.value || undefined })} />
-        </div>
-      </div>
     </div>
   )
 }
 
 function ParentChildMeta({ meta, onChange }: { meta: RelationshipMeta; onChange: (m: RelationshipMeta) => void }) {
   return (
-    <div style={{ marginTop: 8 }}>
+    <div style={{ marginTop: 6 }}>
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
         <input type="checkbox"
           checked={meta.adopted ?? false}
           onChange={e => onChange({ ...meta, adopted: e.target.checked || undefined })} />
-        Adopted / non-biological relationship
+        Adopted / non-biological
       </label>
     </div>
   )
@@ -152,7 +170,8 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
   const isEdit = mode === 'edit'
   const existingClaims = isEdit && editPerson ? store.getClaimsForPerson(editPerson.pubkey) : []
   const existingRelationships = isEdit && editPerson
-    ? getRelationshipsFor(editPerson.pubkey).filter(r => r.subjectPubkey === editPerson.pubkey && !r.retracted)
+    ? getRelationshipsFor(editPerson.pubkey)
+        .filter(r => r.subjectPubkey === editPerson.pubkey && !r.retracted)
     : []
 
   const initFieldValues = (): Partial<Record<FactField, string>> => {
@@ -172,11 +191,11 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
   const [error, setError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
 
-  const [relatedToPubkey, setRelatedToPubkey] = useState('')
-  const [relationshipType, setRelationshipType] = useState<RelationshipType>('parent')
-  const [relMeta, setRelMeta] = useState<RelationshipMeta>({})
+  // Pending relationship rows to save on submit.
+  const [relRows, setRelRows] = useState<RelRow[]>([])
 
-  const allPersons = store.getAllPersons().filter(p => p.pubkey !== editPerson?.pubkey)
+  const subjectPk = editPerson?.pubkey ?? null
+  const allPersons = store.getAllPersons().filter(p => p.pubkey !== subjectPk)
 
   const persistNow = useCallback(() => {
     void storageSet('chronicle:store', store.serialise())
@@ -189,12 +208,32 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
       .filter(r => r.subjectPubkey === rel.relatedPubkey && r.relatedPubkey === rel.subjectPubkey)
     for (const inv of inverseRels) retractRelationship(inv.eventId)
     persistNow()
-    onSave(editPerson!)
+    if (editPerson) onSave(editPerson)
   }, [editPerson, onSave, persistNow])
+
+  const addRelRow = useCallback(() => {
+    setRelRows(rows => [...rows, newRelRow()])
+  }, [])
+
+  const updateRelRow = useCallback((id: string, patch: Partial<RelRow>) => {
+    setRelRows(rows => rows.map(r => r.id === id ? { ...r, ...patch } : r))
+  }, [])
+
+  const removeRelRow = useCallback((id: string) => {
+    setRelRows(rows => rows.filter(r => r.id !== id))
+  }, [])
 
   const handleSave = useCallback(async () => {
     setError('')
     if (!isEdit && !name.trim()) { setError('Please enter a name.'); return }
+
+    for (const row of relRows) {
+      if (!row.relatedPubkey) {
+        setError('Pick a person for each relationship, or remove the empty row.')
+        return
+      }
+    }
+
     setSaving(true)
     try {
       const now = Math.floor(Date.now() / 1000)
@@ -239,27 +278,40 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
         addAndPublishClaim(field, value, evidence.trim() || undefined)
       }
 
-      if (relatedToPubkey) {
-        const subjRel = subjectRel(relationshipType)
-        const metaToStore = Object.keys(relMeta).length > 0 ? relMeta : undefined
+      // Save relationships. For each row, store TWO claims: subject→related and related→subject.
+      let relIdx = 0
+      for (const row of relRows) {
+        const subjRel = row.relationship
+        const invRel = inverseOf(subjRel)
+        const metaToStore = Object.keys(row.meta).length > 0 ? row.meta : undefined
 
-        const makeRel = (subjPubkey: string, relPubkey: string, rel: RelationshipType, meta?: RelationshipMeta): RelationshipClaim => {
-          const eventId = session?.nsec
-            ? (() => {
-                const ev = buildRelationshipClaim({
-                  claimantNpub: claimantPubkey, claimantNsec: session.nsec!,
-                  subjectNpub: subjPubkey, relationship: rel, sensitive: false,
-                })
-                publishEvent(ev)
-                return ev.id
-              })()
-            : `local-rel-${subjPubkey}-${relPubkey}-${rel}-${now}`
-          return { eventId, claimantPubkey, subjectPubkey: subjPubkey, relatedPubkey: relPubkey,
-            relationship: rel, sensitive: false, meta, createdAt: now, retracted: false }
+        const makeId = (subjPubkey: string, rel: RelationshipType): string => {
+          if (session?.nsec) {
+            const ev = buildRelationshipClaim({
+              claimantNpub: claimantPubkey, claimantNsec: session.nsec,
+              subjectNpub: subjPubkey, relationship: rel, sensitive: false,
+            })
+            publishEvent(ev)
+            return ev.id
+          }
+          return `local-rel-${subjPubkey}-${rel}-${now}-${relIdx++}`
         }
 
-        addRelationship(makeRel(person.pubkey, relatedToPubkey, subjRel, metaToStore))
-        addRelationship(makeRel(relatedToPubkey, person.pubkey, relationshipType, metaToStore))
+        const fwdId = makeId(person.pubkey, subjRel)
+        const invId = makeId(row.relatedPubkey, invRel)
+
+        addRelationship({
+          eventId: fwdId, claimantPubkey,
+          subjectPubkey: person.pubkey, relatedPubkey: row.relatedPubkey,
+          relationship: subjRel, sensitive: false, meta: metaToStore,
+          createdAt: now, retracted: false,
+        })
+        addRelationship({
+          eventId: invId, claimantPubkey,
+          subjectPubkey: row.relatedPubkey, relatedPubkey: person.pubkey,
+          relationship: invRel, sensitive: false, meta: metaToStore,
+          createdAt: now, retracted: false,
+        })
       }
 
       persistNow()
@@ -271,13 +323,12 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
       setSaving(false)
     }
   }, [name, fieldValues, evidence, mode, isEdit, editPerson, existingClaims, selfPubkey,
-      relatedToPubkey, relationshipType, relMeta, session, publishEvent, persistNow, onSave, t])
+      relRows, session, publishEvent, persistNow, onSave, t])
 
   const modalTitle = isEdit
     ? `Edit ${editPerson?.displayName ?? 'person'}`
     : mode === 'self' ? t('profile.addPerson.titleSelf') : t('profile.addPerson.titleAncestor')
 
-  const selectedOtherName = relatedToPubkey ? (store.getPerson(relatedToPubkey)?.displayName ?? 'them') : ''
   const subjectName = isEdit ? (editPerson?.displayName ?? 'this person') : (name.trim() || 'this person')
 
   return (
@@ -317,14 +368,14 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
               placeholder={t('profile.addPerson.evidencePlaceholder')} />
           </div>
 
-          {/* Existing relationships */}
+          {/* Existing relationships (edit mode only) */}
           {isEdit && existingRelationships.length > 0 && (
             <div className="form-group">
-              <label>Relationships</label>
+              <label>Existing relationships</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {existingRelationships.map(rel => {
                   const other = store.getPerson(rel.relatedPubkey)
-                  const displayRel = relLabel(rel.relationship)
+                  const subjectLabel = relLabelForSubject(rel.relationship)
                   const meta = rel.meta
                   return (
                     <div key={rel.eventId} style={{
@@ -332,13 +383,12 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
                       border: '1px solid var(--border-soft)', borderRadius: 8,
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontWeight: 500, flex: 1 }}>{other?.displayName ?? '…'}</span>
                         <span style={{ color: 'var(--ink-muted)', fontSize: 13 }}>
-                          is {displayRel} of {editPerson?.displayName}
+                          {editPerson?.displayName} is <strong style={{ color: 'var(--navy)' }}>{subjectLabel}</strong> of {other?.displayName ?? '…'}
                         </span>
                         <button className="btn btn-ghost btn-sm"
-                          style={{ color: '#d06040', padding: '2px 6px', fontSize: 12 }}
-                          onClick={() => handleRemoveRelationship(rel)}>✕</button>
+                          style={{ marginLeft: 'auto', color: '#d06040', padding: '2px 6px', fontSize: 12 }}
+                          onClick={() => handleRemoveRelationship(rel)}>✕ remove</button>
                       </div>
                       {meta && (
                         <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 4, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
@@ -346,9 +396,6 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
                           {meta.startDate && <span>from {meta.startDate}</span>}
                           {meta.endDate && <span>to {meta.endDate}</span>}
                           {meta.adopted && <span>Adopted</span>}
-                          {(meta.childrenFromYear || meta.childrenToYear) && (
-                            <span>Children: {meta.childrenFromYear ?? '?'}{meta.childrenToYear ? `–${meta.childrenToYear}` : '+'}</span>
-                          )}
                         </div>
                       )}
                     </div>
@@ -358,49 +405,73 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
             </div>
           )}
 
-          {/* Add a relationship */}
+          {/* Add relationships */}
           {allPersons.length > 0 && (
             <div className="form-group">
-              <label htmlFor="ap-related">
-                {isEdit ? 'Add a relationship' : 'Relationship to existing person'}
-              </label>
-              <select id="ap-related" className="form-select" value={relatedToPubkey}
-                onChange={e => { setRelatedToPubkey(e.target.value); setRelMeta({}) }}>
-                <option value="">— select a person —</option>
-                {allPersons.map(p => (
-                  <option key={p.pubkey} value={p.pubkey}>{p.displayName}</option>
-                ))}
-              </select>
+              <label>{isEdit ? 'Add relationships' : 'Relationships'}</label>
+              <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginBottom: 8 }}>
+                Tell us how <strong>{subjectName}</strong> is related to people already in the tree.
+                You can add several at once — useful when this person has multiple children, parents, or siblings already in the tree.
+              </div>
 
-              {relatedToPubkey && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginBottom: 6 }}>
-                    {selectedOtherName} is the … of {subjectName}:
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
-                    {RELATIONSHIP_OPTIONS.map(({ value, label }) => (
-                      <button key={value} type="button"
-                        className={`btn btn-sm ${relationshipType === value ? 'btn-primary' : 'btn-outline'}`}
-                        style={{ fontSize: 13 }}
-                        onClick={() => { setRelationshipType(value); setRelMeta({}) }}>
-                        {label}
-                      </button>
-                    ))}
-                  </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {relRows.map(row => {
+                  const other = row.relatedPubkey ? store.getPerson(row.relatedPubkey) : null
+                  const otherName = other?.displayName ?? 'them'
+                  return (
+                    <div key={row.id} style={{
+                      padding: 10, border: '1px solid var(--border-soft)', borderRadius: 8, background: 'var(--cream)',
+                    }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                        <select className="form-select form-select-sm" style={{ flex: 1 }}
+                          value={row.relatedPubkey}
+                          onChange={e => updateRelRow(row.id, { relatedPubkey: e.target.value })}>
+                          <option value="">— select a person —</option>
+                          {allPersons.map(p => (
+                            <option key={p.pubkey} value={p.pubkey}>{p.displayName}</option>
+                          ))}
+                        </select>
+                        <button type="button" className="btn btn-ghost btn-sm"
+                          style={{ color: '#d06040' }} onClick={() => removeRelRow(row.id)}>✕</button>
+                      </div>
 
-                  {/* Metadata per relationship type */}
-                  {(relationshipType === 'spouse') && (
-                    <SpouseMeta meta={relMeta} onChange={setRelMeta} />
-                  )}
-                  {(relationshipType === 'parent' || relationshipType === 'child') && (
-                    <ParentChildMeta meta={relMeta} onChange={setRelMeta} />
-                  )}
+                      {row.relatedPubkey && (
+                        <>
+                          <div style={{ fontSize: 13, color: 'var(--ink-muted)', margin: '10px 0 6px' }}>
+                            <strong style={{ color: 'var(--navy)' }}>{subjectName}</strong> is the … of {otherName}:
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {REL_OPTIONS.map(({ value, label }) => (
+                              <button key={value} type="button"
+                                className={`btn btn-sm ${row.relationship === value ? 'btn-primary' : 'btn-outline'}`}
+                                style={{ fontSize: 13 }}
+                                onClick={() => updateRelRow(row.id, { relationship: value, meta: {} })}>
+                                {label}
+                              </button>
+                            ))}
+                          </div>
 
-                  <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 8 }}>
-                    Will store: {selectedOtherName} is {RELATIONSHIP_OPTIONS.find(o => o.value === relationshipType)?.label ?? ''} of {subjectName}
-                  </div>
-                </div>
-              )}
+                          {row.relationship === 'spouse' && (
+                            <SpouseMeta meta={row.meta} onChange={m => updateRelRow(row.id, { meta: m })} />
+                          )}
+                          {(row.relationship === 'parent' || row.relationship === 'child') && (
+                            <ParentChildMeta meta={row.meta} onChange={m => updateRelRow(row.id, { meta: m })} />
+                          )}
+
+                          <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 8 }}>
+                            Will save: <strong>{subjectName} is {relLabelForSubject(row.relationship)} of {otherName}</strong>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )
+                })}
+
+                <button type="button" className="btn btn-outline btn-sm"
+                  style={{ alignSelf: 'flex-start' }} onClick={addRelRow}>
+                  + Add a relationship
+                </button>
+              </div>
             </div>
           )}
 

@@ -1,0 +1,254 @@
+/**
+ * Tests for the family tree visualisation layout.
+ *
+ * These tests exercise the pure layout functions used by FamilyTreeView,
+ * verifying that:
+ *   - Children are positioned BELOW parents (greater y value).
+ *   - Every parent→child relationship produces exactly one connector edge.
+ *   - Spouses share a generation (same y).
+ *   - Multiple children of the same parent all sit at the same generation.
+ *
+ * The visual D3 rendering is not unit-tested here; the layout maths is.
+ */
+
+import { describe, it, expect, beforeEach } from 'vitest'
+import {
+  _resetGraphStore,
+  addRelationship,
+  traverseGraph,
+} from './graph'
+import type { RelationshipClaim } from './graph'
+import type { RelationshipType } from '../types/chronicle'
+import {
+  __test_normaliseEdges,
+  __test_assignGenerations,
+  __test_computeLayout,
+} from '../components/FamilyTreeView.layout'
+
+// ─── Fixtures ─────────────────────────────────────────────────────────────────
+
+const Matt    = 'npub_matt'
+const Stephen = 'npub_stephen'
+const Layla   = 'npub_layla'
+const Anna    = 'npub_anna'
+const Tom     = 'npub_tom'  // a child of Matt's
+const Joe     = 'npub_joe'  // another child of Matt's
+
+let idCounter = 0
+function makeRel(
+  subject: string,
+  related: string,
+  rel: RelationshipType,
+): RelationshipClaim {
+  idCounter++
+  return {
+    eventId: `evt-${idCounter}`,
+    claimantPubkey: subject,
+    subjectPubkey: subject,
+    relatedPubkey: related,
+    relationship: rel,
+    sensitive: false,
+    createdAt: 1_000_000 + idCounter,
+    retracted: false,
+  }
+}
+
+// Helper to record both directions of a relationship like AddPersonModal does.
+function addBoth(subj: string, related: string, subjRel: RelationshipType) {
+  const inv: RelationshipType =
+    subjRel === 'parent'  ? 'child'  :
+    subjRel === 'child'   ? 'parent' :
+    subjRel  // spouse/sibling are their own inverses
+  addRelationship(makeRel(subj, related, subjRel))
+  addRelationship(makeRel(related, subj, inv))
+}
+
+beforeEach(() => {
+  _resetGraphStore()
+  idCounter = 0
+})
+
+// ─── Generation tests ─────────────────────────────────────────────────────────
+
+describe('FamilyTreeView layout — generations', () => {
+  it('root only: gen 0', () => {
+    const { nodes, edges } = traverseGraph(Matt)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Matt, nodes.length === 0 ? [Matt] : nodes, norm.parentChild, norm.spouses)
+    expect(gens.get(Matt)).toBe(0)
+  })
+
+  it('one parent: parent is gen -1, root is gen 0', () => {
+    // Matt is child of Stephen → Stephen is parent of Matt
+    addBoth(Matt, Stephen, 'child')
+    const { nodes, edges } = traverseGraph(Matt)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Matt, nodes, norm.parentChild, norm.spouses)
+    expect(gens.get(Stephen)).toBe(-1)
+    expect(gens.get(Matt)).toBe(0)
+  })
+
+  it('two parents: both at gen -1', () => {
+    addBoth(Matt, Stephen, 'child')
+    addBoth(Matt, Layla, 'child')
+    const { nodes, edges } = traverseGraph(Matt)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Matt, nodes, norm.parentChild, norm.spouses)
+    expect(gens.get(Stephen)).toBe(-1)
+    expect(gens.get(Layla)).toBe(-1)
+    expect(gens.get(Matt)).toBe(0)
+  })
+
+  it('child of root: at gen +1', () => {
+    // Matt is parent of Tom
+    addBoth(Matt, Tom, 'parent')
+    const { nodes, edges } = traverseGraph(Matt)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Matt, nodes, norm.parentChild, norm.spouses)
+    expect(gens.get(Matt)).toBe(0)
+    expect(gens.get(Tom)).toBe(1)
+  })
+
+  it('multiple children of root: all at gen +1', () => {
+    addBoth(Matt, Tom, 'parent')
+    addBoth(Matt, Joe, 'parent')
+    const { nodes, edges } = traverseGraph(Matt)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Matt, nodes, norm.parentChild, norm.spouses)
+    expect(gens.get(Tom)).toBe(1)
+    expect(gens.get(Joe)).toBe(1)
+  })
+
+  it('three generations: grandparent at -2 via parent chain', () => {
+    // Anna -- parent of --> Stephen -- parent of --> Matt
+    addBoth(Stephen, Anna,    'child')   // Stephen is child of Anna
+    addBoth(Matt,    Stephen, 'child')   // Matt is child of Stephen
+    const { nodes, edges } = traverseGraph(Matt)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Matt, nodes, norm.parentChild, norm.spouses)
+    expect(gens.get(Matt)).toBe(0)
+    expect(gens.get(Stephen)).toBe(-1)
+    expect(gens.get(Anna)).toBe(-2)
+  })
+
+  it('spouse shares a generation with subject', () => {
+    addBoth(Matt, Anna, 'spouse')
+    const { nodes, edges } = traverseGraph(Matt)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Matt, nodes, norm.parentChild, norm.spouses)
+    expect(gens.get(Matt)).toBe(0)
+    expect(gens.get(Anna)).toBe(0)
+  })
+})
+
+// ─── Layout tests ─────────────────────────────────────────────────────────────
+
+describe('FamilyTreeView layout — positions', () => {
+  it('parent has smaller y than child', () => {
+    addBoth(Matt, Stephen, 'child') // Stephen is parent of Matt
+    const { nodes, edges } = traverseGraph(Matt)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Matt, nodes, norm.parentChild, norm.spouses)
+    const pos  = __test_computeLayout(nodes, gens, norm.parentChild, norm.spouses, Matt)
+    expect(pos.get(Stephen)!.y).toBeLessThan(pos.get(Matt)!.y)
+  })
+
+  it('multiple children all sit on the same row below the parent', () => {
+    addBoth(Matt, Tom, 'parent')
+    addBoth(Matt, Joe, 'parent')
+    const { nodes, edges } = traverseGraph(Matt)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Matt, nodes, norm.parentChild, norm.spouses)
+    const pos  = __test_computeLayout(nodes, gens, norm.parentChild, norm.spouses, Matt)
+    expect(pos.get(Tom)!.y).toBe(pos.get(Joe)!.y)
+    expect(pos.get(Tom)!.y).toBeGreaterThan(pos.get(Matt)!.y)
+  })
+
+  it('two parents sit on the same row above the child', () => {
+    addBoth(Matt, Stephen, 'child')
+    addBoth(Matt, Layla,   'child')
+    const { nodes, edges } = traverseGraph(Matt)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Matt, nodes, norm.parentChild, norm.spouses)
+    const pos  = __test_computeLayout(nodes, gens, norm.parentChild, norm.spouses, Matt)
+    expect(pos.get(Stephen)!.y).toBe(pos.get(Layla)!.y)
+    expect(pos.get(Stephen)!.y).toBeLessThan(pos.get(Matt)!.y)
+  })
+
+  it('spouses get distinct x positions on the same y', () => {
+    addBoth(Matt, Anna, 'spouse')
+    const { nodes, edges } = traverseGraph(Matt)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Matt, nodes, norm.parentChild, norm.spouses)
+    const pos  = __test_computeLayout(nodes, gens, norm.parentChild, norm.spouses, Matt)
+    expect(pos.get(Matt)!.y).toBe(pos.get(Anna)!.y)
+    expect(pos.get(Matt)!.x).not.toBe(pos.get(Anna)!.x)
+  })
+})
+
+// ─── Edge normalisation tests ─────────────────────────────────────────────────
+
+describe('FamilyTreeView layout — edge normalisation', () => {
+  it('forward+inverse parent/child claims produce ONE parent-child edge', () => {
+    addBoth(Matt, Stephen, 'child') // creates two claims: child + parent
+    const { edges } = traverseGraph(Matt)
+    const norm = __test_normaliseEdges(edges)
+    expect(norm.parentChild).toHaveLength(1)
+    expect(norm.parentChild[0].parent).toBe(Stephen)
+    expect(norm.parentChild[0].child).toBe(Matt)
+  })
+
+  it('multiple parent-child edges between different pairs all preserved', () => {
+    addBoth(Matt, Stephen, 'child')
+    addBoth(Matt, Layla,   'child')
+    addBoth(Matt, Tom,     'parent')
+    const { edges } = traverseGraph(Matt)
+    const norm = __test_normaliseEdges(edges)
+    expect(norm.parentChild).toHaveLength(3)
+    // Stephen and Layla parent Matt; Matt parents Tom
+    const parents = norm.parentChild.filter(e => e.child === Matt).map(e => e.parent).sort()
+    expect(parents).toEqual([Layla, Stephen].sort())
+    const matsChildren = norm.parentChild.filter(e => e.parent === Matt).map(e => e.child)
+    expect(matsChildren).toEqual([Tom])
+  })
+
+  it('spouse pair produces ONE spouse edge', () => {
+    addBoth(Matt, Anna, 'spouse')
+    const { edges } = traverseGraph(Matt)
+    const norm = __test_normaliseEdges(edges)
+    expect(norm.spouses).toHaveLength(1)
+  })
+})
+
+// ─── End-to-end integration ───────────────────────────────────────────────────
+
+describe('FamilyTreeView layout — end-to-end family', () => {
+  it('Matt with two parents and two children: 3 generations, correct edges', () => {
+    addBoth(Matt, Stephen, 'child')   // Stephen parent of Matt
+    addBoth(Matt, Layla,   'child')   // Layla parent of Matt
+    addBoth(Matt, Tom,     'parent')  // Matt parent of Tom
+    addBoth(Matt, Joe,     'parent')  // Matt parent of Joe
+
+    const { nodes, edges } = traverseGraph(Matt)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Matt, nodes, norm.parentChild, norm.spouses)
+    const pos  = __test_computeLayout(nodes, gens, norm.parentChild, norm.spouses, Matt)
+
+    // Three distinct y rows
+    const ys = new Set([
+      pos.get(Stephen)!.y, pos.get(Layla)!.y,
+      pos.get(Matt)!.y,
+      pos.get(Tom)!.y, pos.get(Joe)!.y,
+    ])
+    expect(ys.size).toBe(3)
+
+    // Stephen/Layla above Matt; Matt above Tom/Joe
+    expect(pos.get(Stephen)!.y).toBe(pos.get(Layla)!.y)
+    expect(pos.get(Stephen)!.y).toBeLessThan(pos.get(Matt)!.y)
+    expect(pos.get(Matt)!.y).toBeLessThan(pos.get(Tom)!.y)
+    expect(pos.get(Tom)!.y).toBe(pos.get(Joe)!.y)
+
+    // Four parent-child edges total
+    expect(norm.parentChild).toHaveLength(4)
+  })
+})
