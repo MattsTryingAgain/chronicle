@@ -371,3 +371,63 @@ describe('FamilyTreeView layout — in-row ordering by parent x', () => {
     expect(dianeBillDist).toBeGreaterThan(billPatDist)
   })
 })
+
+// ─── Regression: parents centred over their children's group ──────────────────
+//
+// Real bug from screenshot 140: the parents row was placed in input order,
+// not centred over the children of each couple. Diane+Ralph were sitting
+// off to the left of their children's actual midpoint, and the arm coming
+// up from Stephen+Maria's couple-midpoint crossed Patricia's drop line.
+
+describe('FamilyTreeView layout — parents centred over children groups', () => {
+  it('each grandparent couple sits directly above the midpoint of their own children', () => {
+    // Two grandparent couples, three children each, one of those children
+    // from each side marries the other to produce Matt.
+    const D='diane', R='ralph', P='patricia', BSr='billsr'
+    const Ed='eddie', Ph='phil', St='stephen', Ma='maria', BJr='billjr', So='sonya'
+    const Mt='matt'
+
+    addBoth(D, R, 'spouse')
+    addBoth(P, BSr, 'spouse')
+    addBoth(St, Ma, 'spouse')
+
+    for (const c of [Ed, Ph, St]) {
+      addBoth(c, D, 'child'); addBoth(c, R, 'child')
+    }
+    for (const c of [Ma, BJr, So]) {
+      addBoth(c, P, 'child'); addBoth(c, BSr, 'child')
+    }
+    addBoth(Mt, St, 'child'); addBoth(Mt, Ma, 'child')
+
+    const { nodes, edges } = traverseGraph(Mt)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Mt, nodes, norm.parentChild, norm.spouses)
+    const pos  = __test_computeLayout(nodes, gens, norm.parentChild, norm.spouses, Mt)
+
+    const drMid    = (pos.get(D)!.x + pos.get(R)!.x) / 2
+    const ephsMid  = (pos.get(Ed)!.x + pos.get(Ph)!.x + pos.get(St)!.x) / 3
+    const pbMid    = (pos.get(P)!.x + pos.get(BSr)!.x) / 2
+    const mbsoMid  = (pos.get(Ma)!.x + pos.get(BJr)!.x + pos.get(So)!.x) / 3
+
+    // Couple midpoint should match children's centroid within a small tolerance.
+    expect(Math.abs(drMid - ephsMid)).toBeLessThan(5)
+    expect(Math.abs(pbMid - mbsoMid)).toBeLessThan(5)
+  })
+
+  it('a single parent couple with multiple children sits centred above them', () => {
+    // Simpler scenario: one couple at top, three kids below.
+    const D='d', R='r'
+    const A='a', B='b', C='c'
+    addBoth(D, R, 'spouse')
+    for (const k of [A, B, C]) { addBoth(k, D, 'child'); addBoth(k, R, 'child') }
+
+    const { nodes, edges } = traverseGraph(A)   // root one of the kids
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(A, nodes, norm.parentChild, norm.spouses)
+    const pos  = __test_computeLayout(nodes, gens, norm.parentChild, norm.spouses, A)
+
+    const drMid    = (pos.get(D)!.x + pos.get(R)!.x) / 2
+    const kidsMid  = (pos.get(A)!.x + pos.get(B)!.x + pos.get(C)!.x) / 3
+    expect(Math.abs(drMid - kidsMid)).toBeLessThan(5)
+  })
+})

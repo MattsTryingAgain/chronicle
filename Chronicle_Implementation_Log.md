@@ -873,3 +873,31 @@ Every relationship the user sees in the UI is stored as TWO Nostr claims — one
 ### Gotcha #36 — Sibling groups, not equal spacing
 
 When laying out a row, **siblings (slots with the same parents) must be placed adjacently and centred over those parents, NOT spaced evenly with everyone else in the row**. Equal H_GAP spacing means a sibling whose siblings are clustered tightly will drift away from them if the row contains other slots with different parents. If you ever change the layout algorithm, the regression test "Stephen and Eddie sit on the same side as Ralph + Diane" is your guard.
+
+### Family tree — parents now centre over their children (v1.0.49)
+
+**Problem reported on v1.0.48:** Sibling grouping was correct (Eddie+Phil+Stephen all clustered together as Diane+Ralph's children), but the parent couples in the row above were still placed by input order, not centred over their children. Stephen+Maria's couple-midpoint (the point the connector arm rises from) sat to the right of Patricia's drop line, so the arms crossed visibly.
+
+**Root cause:** `computeLayout` only did a top-down pass. When laying out the grandparent row, no children were placed yet, so the row was assembled in raw input order. Children were then placed correctly below — but the parents never moved.
+
+**Fix in `src/components/FamilyTreeView.layout.ts` — two-pass layout:**
+
+1. **Pass 1 (top-down)** — unchanged from v1.0.48. Places generations oldest → youngest, grouping siblings by parent-set and ordering groups by parent x.
+2. **Pass 2 (bottom-up re-centring)** — new. For each generation youngest → oldest, every sibling group is slid so its centre matches the centroid of its children's x positions. Movement is constrained by the group's neighbours in the same row — a group can only slide as far as the gap to its neighbours allows. Three sweeps are run so alignment can propagate up multiple generations.
+3. **Root anchor** at the end is unchanged.
+
+**Verified on the screenshot 140 fixture:**
+- Diane+Ralph midpoint = -252, children Eddie+Phil+Stephen avg x = -252 (gap: 0)
+- Patricia+Bill(sr) midpoint = 444, children Maria+Bill(jr)+Sonya avg x = 444 (gap: 0)
+
+**Two regression tests added** to `src/lib/familyTreeLayout.test.ts`:
+- "each grandparent couple sits directly above the midpoint of their own children" — the screenshot 140 scenario.
+- "a single parent couple with multiple children sits centred above them" — the simpler base case.
+
+**Tests:** 635/635 passing (was 633 + 2 new).
+**TypeScript:** clean.
+**Build:** clean.
+
+### Gotcha #37 — Layout requires a bottom-up re-centring pass
+
+Top-down placement alone is not enough. Without the bottom-up sweep, parents end up in input order regardless of where their children land, and the connector arms cross between generations. **If a future change to the layout removes the bottom-up loop, the screenshot 140 regression test will fail.** Three sweeps is usually enough for trees up to ~7 generations; very tall trees may need more iterations, but 3 is a safe default.

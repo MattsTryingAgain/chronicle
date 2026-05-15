@@ -118,21 +118,32 @@ function assignGenerations(
 // ─── Layout ───────────────────────────────────────────────────────────────────
 // Place each node at (x, y). y is determined strictly by generation.
 //
-// Order of operations:
-//   1. Find the topmost generation. Place those slots in a stable order
-//      (root's slot first if present, otherwise stable by member order).
-//   2. Walk DOWN one generation at a time. For each slot in a generation,
-//      compute the average x of any already-placed PARENTS — slots sort by
-//      this so that children appear under their parents.
-//   3. Slots with no placed parents (e.g. ancestors who weren't in the
-//      previous generation, or root's own row when root has no parents)
-//      keep their declared input order.
-//   4. After all generations are placed, shift the whole tree so the root
-//      ends up at x = 0 (the auto-fit zoom then centres everything).
+// TWO-PASS ALGORITHM:
 //
-// This is the inverse of the older bottom-up pass, which mis-sorted slots
-// like Stephen+Maria when Stephen's children and Maria's children were
-// being averaged together and Stephen drifted between the wrong parents.
+//   Pass 1 — top-down. For each generation oldest → youngest, group slots
+//   by their parent-set ("sibling groups"). Within each generation, sort
+//   groups by the x of their parents (already placed in the row above),
+//   then place groups left-to-right with overlap resolution.
+//
+//   Pass 2 — bottom-up re-centring. For each generation youngest → oldest,
+//   slide each sibling group's centre so that it matches the midpoint of
+//   the group of children it parents. Constrained: a group can only move
+//   horizontally within the gaps left by its neighbours in the same row.
+//
+//   Pass 2 fixes the case where a parent couple ends up off-centre over
+//   their children — the symptom is connector arms that cross sideways
+//   between generations. After re-centring, each couple sits directly
+//   above its children's midpoint whenever there's room.
+//
+// Finally, the whole tree is shifted so the root sits at x = 0.
+
+interface SlotGroup {
+  slots: string[][]
+  parentMidX: number | null
+  hasRoot: boolean
+  members: string[]   // flat list of all pubkeys in this group
+  width: number       // total horizontal width of the group
+}
 
 function computeLayout(
   nodes: string[],
@@ -141,7 +152,7 @@ function computeLayout(
   spouses: SpouseEdge[],
   rootPubkey: string,
 ): Map<string, { x: number; y: number }> {
-  // Adjacency maps
+  // Adjacency
   const spouseOf = new Map<string, string>()
   for (const s of spouses) {
     spouseOf.set(s.a, s.b)
@@ -162,8 +173,6 @@ function computeLayout(
   const minGen = gens[0] ?? 0
   const pos = new Map<string, { x: number; y: number }>()
 
-  // Build slots for a generation: couples first, then solos. Returns slots
-  // in the input order — the caller is responsible for ordering them.
   const buildSlots = (members: string[]): string[][] => {
     const slots: string[][] = []
     const placedSet = new Set<string>()
@@ -184,7 +193,6 @@ function computeLayout(
   const slotWidth = (slot: string[]) =>
     slot.length === 2 ? NODE_W * 2 + COUPLE_GAP : NODE_W
 
-  // Average x of any already-placed parents of the people in this slot.
   const avgParentX = (slot: string[]): number | null => {
     const xs: number[] = []
     for (const pk of slot) {
@@ -196,144 +204,198 @@ function computeLayout(
     return xs.length > 0 ? xs.reduce((a, b) => a + b, 0) / xs.length : null
   }
 
-  // Process generations top-down.
+  const slotParentKey = (slot: string[]): string => {
+    const parents = new Set<string>()
+    for (const pk of slot) {
+      for (const p of parentsOf.get(pk) ?? []) parents.add(p)
+    }
+    return Array.from(parents).sort().join('|')
+  }
+
+  const groupWidth = (g: { slots: string[][] }): number => {
+    let w = 0
+    for (let i = 0; i < g.slots.length; i++) {
+      if (i > 0) w += H_GAP
+      w += slotWidth(g.slots[i])
+    }
+    return w
+  }
+
+  const INTER_GROUP_GAP = H_GAP + 24
+
+  // Place all slots of a group, given the group's centre x and y.
+  // Records resulting positions in `pos`.
+  const placeGroupSlots = (g: SlotGroup, centreX: number, y: number) => {
+    let curX = centreX - g.width / 2
+    for (const slot of g.slots) {
+      const w = slotWidth(slot)
+      const c = curX + w / 2
+      if (slot.length === 2) {
+        pos.set(slot[0], { x: c - (NODE_W + COUPLE_GAP) / 2, y })
+        pos.set(slot[1], { x: c + (NODE_W + COUPLE_GAP) / 2, y })
+      } else {
+        pos.set(slot[0], { x: c, y })
+      }
+      curX += w + H_GAP
+    }
+  }
+
+  // Per-generation state for pass 2.
+  const generationLayout = new Map<number, {
+    yPos: number
+    groups: SlotGroup[]
+    centres: number[]
+  }>()
+
+  // ── PASS 1 — top-down placement by parent x ────────────────────────────────
   for (const gen of gens) {
     const members = byGen.get(gen)!
     const yPos = (gen - minGen) * (NODE_H + V_GAP)
     const slots = buildSlots(members)
 
-    // Group slots into "sibling groups" by shared parent-set. Slots that
-    // share the same parents (or that are siblings via shared parents)
-    // form one group and are laid out adjacently, centred over their
-    // parents' midpoint.
-    //
-    // Slots with no placed parents form their own one-slot groups. The
-    // root's slot is always in a group of its own at the front so it
-    // stays anchored.
-    interface SlotGroup {
-      slots: string[][]
-      parentMidX: number | null
-      hasRoot: boolean
-    }
-
-    const slotParentKey = (slot: string[]): string => {
-      // Combine the parent sets of every member of the slot. For a couple,
-      // each spouse usually has different parents, but the slot is treated
-      // as a unit so we union them.
-      const parents = new Set<string>()
-      for (const pk of slot) {
-        for (const p of parentsOf.get(pk) ?? []) parents.add(p)
-      }
-      return Array.from(parents).sort().join('|')
-    }
-
+    // Group slots by parent-set
     const groupMap = new Map<string, SlotGroup>()
     const groupOrder: SlotGroup[] = []
     for (const slot of slots) {
       const key = slotParentKey(slot)
       const hasRoot = slot.includes(rootPubkey)
-      // No parents → singleton group (so unrelated trees stay separate).
-      // Root → always its own singleton at the front.
       if (key === '' || hasRoot) {
-        const g: SlotGroup = { slots: [slot], parentMidX: avgParentX(slot), hasRoot }
+        const g: SlotGroup = {
+          slots: [slot], parentMidX: avgParentX(slot), hasRoot,
+          members: [...slot], width: 0,
+        }
+        g.width = groupWidth(g)
         groupOrder.push(g)
         continue
       }
       let g = groupMap.get(key)
       if (!g) {
-        g = { slots: [], parentMidX: avgParentX(slot), hasRoot: false }
+        g = { slots: [], parentMidX: avgParentX(slot), hasRoot: false, members: [], width: 0 }
         groupMap.set(key, g)
         groupOrder.push(g)
       }
       g.slots.push(slot)
+      g.members.push(...slot)
     }
+    for (const g of groupOrder) g.width = groupWidth(g)
 
-    // Sort groups: root first, then by parent midpoint, then null-parent
-    // groups at the end in input order.
+    // Sort: root first, then by parentMidX, null-parent groups last.
     groupOrder.sort((a, b) => {
       if (a.hasRoot && !b.hasRoot) return -1
       if (b.hasRoot && !a.hasRoot) return 1
       if (a.parentMidX !== null && b.parentMidX !== null) return a.parentMidX - b.parentMidX
       if (a.parentMidX !== null) return -1
       if (b.parentMidX !== null) return 1
-      return 0  // preserve input order for unrelated null-parent groups
+      return 0
     })
 
-    // Width of an entire group: sum of slot widths plus H_GAP between them.
-    const groupWidth = (g: SlotGroup): number => {
-      let w = 0
-      for (let i = 0; i < g.slots.length; i++) {
-        if (i > 0) w += H_GAP
-        w += slotWidth(g.slots[i])
-      }
-      return w
-    }
-
-    // Place groups: each group's centre prefers its parentMidX. Sweep
-    // left-to-right and push later groups right if they would overlap
-    // their predecessor. (A larger inter-group gap keeps unrelated
-    // sibling groups visually distinct.)
-    const INTER_GROUP_GAP = H_GAP + 24
-
-    const groupCentres: number[] = []
+    // Initial centres: each group at its target, with overlap resolution.
+    const centres: number[] = []
     for (let i = 0; i < groupOrder.length; i++) {
       const g = groupOrder[i]
-      const w = groupWidth(g)
       let centre = g.parentMidX ?? 0
       if (i > 0) {
         const prev = groupOrder[i - 1]
-        const prevW = groupWidth(prev)
-        const minCentre = groupCentres[i - 1] + prevW / 2 + INTER_GROUP_GAP + w / 2
+        const minCentre = centres[i - 1] + prev.width / 2 + INTER_GROUP_GAP + g.width / 2
         if (centre < minCentre) centre = minCentre
       }
-      groupCentres.push(centre)
+      centres.push(centre)
     }
 
-    // Pull-back pass: if a later group was pushed right of its target,
-    // try to slide earlier groups (those currently left of their target)
-    // rightward to share the load.
+    // Pull-back pass
     for (let i = groupOrder.length - 1; i > 0; i--) {
       const target = groupOrder[i].parentMidX
       if (target === null) continue
-      let surplus = groupCentres[i] - target
+      let surplus = centres[i] - target
       if (surplus <= 0) continue
       for (let j = i - 1; j >= 0; j--) {
         const tj = groupOrder[j].parentMidX
         if (tj === null) break
-        const want = tj - groupCentres[j]
+        const want = tj - centres[j]
         if (want <= 0) break
         const shift = Math.min(want, surplus)
         if (shift <= 0) break
-        groupCentres[j] += shift
+        centres[j] += shift
         surplus -= shift
         if (surplus <= 0) break
       }
     }
 
-    // Now place each slot inside its group. The first slot's centre is at
-    // groupCentre - groupWidth/2 + firstSlotWidth/2; each subsequent slot
-    // is placed with H_GAP between adjacent edges.
+    // Write positions for this generation
     for (let gi = 0; gi < groupOrder.length; gi++) {
-      const g = groupOrder[gi]
-      const gw = groupWidth(g)
-      let curX = groupCentres[gi] - gw / 2
-      for (const slot of g.slots) {
-        const w = slotWidth(slot)
-        const centre = curX + w / 2
-        if (slot.length === 2) {
-          pos.set(slot[0], { x: centre - (NODE_W + COUPLE_GAP) / 2, y: yPos })
-          pos.set(slot[1], { x: centre + (NODE_W + COUPLE_GAP) / 2, y: yPos })
-        } else {
-          pos.set(slot[0], { x: centre, y: yPos })
-        }
-        curX += w + H_GAP
-      }
+      placeGroupSlots(groupOrder[gi], centres[gi], yPos)
     }
+
+    generationLayout.set(gen, { yPos, groups: groupOrder, centres })
   }
 
-  // Final shift: anchor the root to x = 0 so the visual centre matches the
-  // user's identity. Auto-fit zoom will recentre everything anyway, but
-  // this keeps the root predictable.
+  // ── PASS 2 — bottom-up re-centring of parent groups over their children ───
+  //
+  // For each generation from youngest to oldest, look at every group in
+  // the *next* (older) generation and ask: "what's the midpoint of my
+  // children in this generation?" Then slide the parent group's centre
+  // toward that midpoint, constrained by its neighbours.
+  //
+  // Children of a parent group g are the union of all children of its
+  // members. We compute the average x of those children's current
+  // positions.
+  //
+  // We make several iterations to let alignments propagate up multiple
+  // generations — 3 sweeps is enough for typical trees.
+
+  const childrenOf = new Map<string, Set<string>>()
+  for (const n of nodes) childrenOf.set(n, new Set())
+  for (const e of pc) childrenOf.get(e.parent)?.add(e.child)
+
+  for (let sweep = 0; sweep < 3; sweep++) {
+    let movedAny = false
+    for (let gi = gens.length - 2; gi >= 0; gi--) {
+      const gen = gens[gi]
+      const layout = generationLayout.get(gen)!
+
+      for (let i = 0; i < layout.groups.length; i++) {
+        const g = layout.groups[i]
+        if (g.hasRoot) continue   // root anchor is immovable
+
+        // Find this group's children that are placed in lower generations.
+        const childXs: number[] = []
+        for (const member of g.members) {
+          for (const child of childrenOf.get(member) ?? []) {
+            const cp = pos.get(child)
+            if (cp) childXs.push(cp.x)
+          }
+        }
+        if (childXs.length === 0) continue
+
+        const desiredCentre = childXs.reduce((a, b) => a + b, 0) / childXs.length
+        const currentCentre = layout.centres[i]
+        const delta = desiredCentre - currentCentre
+        if (Math.abs(delta) < 0.5) continue
+
+        // Bounds: how far can we slide without colliding with neighbours
+        // in the same row?
+        let minAllowed = -Infinity
+        let maxAllowed = +Infinity
+        if (i > 0) {
+          const prev = layout.groups[i - 1]
+          minAllowed = layout.centres[i - 1] + prev.width / 2 + INTER_GROUP_GAP + g.width / 2
+        }
+        if (i < layout.groups.length - 1) {
+          const next = layout.groups[i + 1]
+          maxAllowed = layout.centres[i + 1] - next.width / 2 - INTER_GROUP_GAP - g.width / 2
+        }
+        const newCentre = Math.max(minAllowed, Math.min(maxAllowed, desiredCentre))
+        if (Math.abs(newCentre - currentCentre) < 0.5) continue
+
+        layout.centres[i] = newCentre
+        placeGroupSlots(g, newCentre, layout.yPos)
+        movedAny = true
+      }
+    }
+    if (!movedAny) break
+  }
+
+  // Final shift: anchor the root to x = 0.
   const rootPos = pos.get(rootPubkey)
   if (rootPos) {
     const dx = -rootPos.x
