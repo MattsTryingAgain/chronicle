@@ -901,3 +901,35 @@ When laying out a row, **siblings (slots with the same parents) must be placed a
 ### Gotcha #37 — Layout requires a bottom-up re-centring pass
 
 Top-down placement alone is not enough. Without the bottom-up sweep, parents end up in input order regardless of where their children land, and the connector arms cross between generations. **If a future change to the layout removes the bottom-up loop, the screenshot 140 regression test will fail.** Three sweeps is usually enough for trees up to ~7 generations; very tall trees may need more iterations, but 3 is a safe default.
+
+### Family tree — cousins land under their own parents; cleaner connector beams (v1.0.50)
+
+**Problem reported on v1.0.49:** Adding Hannah as a child of Hellen+Neil (who sit on one side of the parents row) placed Hannah on the OPPOSITE side of Matt's generation rather than under her actual parents. Additionally, the great-grandparents row appeared as one continuous horizontal bar because each couple's T-junction beam sat at the same midY and fused visually.
+
+**Root causes:**
+1. **Root group was force-pinned at the front of its generation.** The grouping code created a singleton group for any slot containing the root, then sorted with `hasRoot ? -1 : 1`. This meant the root's group always sat at the left of its row regardless of where its parents actually were, and the root's siblings (e.g. Laura) ended up in a separate group that wasn't visually adjacent.
+2. **All parent→child connector beams drew at midY** (halfway between rows). When many unrelated couples in one row drop down to children in the next, all their horizontal beams sit at one shared Y and fuse into a continuous bar.
+
+**Fix in `src/components/FamilyTreeView.layout.ts`:**
+- Removed the singleton-group special case for the root. The root joins its sibling group by parent-set like any other member. Pass 2 (bottom-up re-centring) still skips the root's group from sliding, so the root's x remains the tree anchor.
+- Removed the `hasRoot` priority from group sorting. Groups sort purely by parent x.
+- The end-of-layout root-shift (anchor root to x=0) still runs, so the visual centre still matches the user's identity.
+
+**Fix in `src/components/FamilyTreeView.tsx`:**
+- Connector beam Y position changed from `midY = (y1 + y2) / 2` to `armY = y2 - 28` (28px above the child). Each T-junction now hugs its own children's row instead of spanning the full vertical gap. The vertical legs from parents are longer, the horizontal beams are shorter and visually distinct between unrelated couples.
+
+**Two regression tests added** to `src/lib/familyTreeLayout.test.ts`:
+- "cousin whose parents are far left of root sits at the far left of root's row" — Hannah lands at her parents' midpoint, not stranded among Matt's siblings.
+- "Matt's siblings group with Matt rather than being a separate sibling group" — verifies that Laura (Matt's sister) is now within H_GAP of Matt, not pushed into a separate sibling group.
+
+**Tests:** 637/637 passing (was 635 + 2 new).
+**TypeScript:** clean.
+**Build:** clean.
+
+### Gotcha #38 — Root is not special during slot grouping
+
+The root must group with its siblings by shared parent-set like any other member of the generation. **Do not** force the root's slot into a singleton group: doing so will visually exile the root's siblings to a separate cluster and prevent the root's cousins from sitting beneath their own parents. The only special treatment the root still gets is being skipped during Pass 2 re-centring (so the whole tree doesn't drift when the root's children are off-centre) and the final tree-wide shift that anchors root to x=0.
+
+### Gotcha #39 — Parent→child beams sit close to the child, not at midY
+
+If you move the elbow Y position back to midY, multiple unrelated parent groups in the same generation will all draw their horizontal beams at the same Y, fusing visually into a single bar. Keep `armY = y2 - 28` (or similar, tied to the child top) so each T-junction stays close to its child.

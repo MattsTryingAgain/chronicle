@@ -256,10 +256,15 @@ function computeLayout(
     // Group slots by parent-set
     const groupMap = new Map<string, SlotGroup>()
     const groupOrder: SlotGroup[] = []
+    // Group slots by parent-set. Slots with no parents form their own
+    // singleton groups (typically the top generation). The root's slot
+    // joins its sibling group like any other — we just remember which
+    // group it's in so pass 2 doesn't slide it (keeping the root anchored).
     for (const slot of slots) {
       const key = slotParentKey(slot)
       const hasRoot = slot.includes(rootPubkey)
-      if (key === '' || hasRoot) {
+      if (key === '') {
+        // No parents at all → singleton group (unrelated tree, e.g. top gen)
         const g: SlotGroup = {
           slots: [slot], parentMidX: avgParentX(slot), hasRoot,
           members: [...slot], width: 0,
@@ -276,13 +281,13 @@ function computeLayout(
       }
       g.slots.push(slot)
       g.members.push(...slot)
+      if (hasRoot) g.hasRoot = true
     }
     for (const g of groupOrder) g.width = groupWidth(g)
 
-    // Sort: root first, then by parentMidX, null-parent groups last.
+    // Sort by parent midpoint x. null-parent groups (top gen) sort by
+    // input order, placed after parented groups.
     groupOrder.sort((a, b) => {
-      if (a.hasRoot && !b.hasRoot) return -1
-      if (b.hasRoot && !a.hasRoot) return 1
       if (a.parentMidX !== null && b.parentMidX !== null) return a.parentMidX - b.parentMidX
       if (a.parentMidX !== null) return -1
       if (b.parentMidX !== null) return 1

@@ -265,7 +265,12 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
       // skip drawing rather than producing weird visual.
       if (y2 <= y1) continue
 
-      const midY = (y1 + y2) / 2
+      // The horizontal "beam" of the elbow sits closer to the CHILD (not
+      // midway). This keeps T-junctions tight under their own children's
+      // group instead of stretching halfway across the row at one shared
+      // Y — which made multiple unrelated couples' beams visually fuse
+      // into a single continuous bar across the top of the tree.
+      const armY = y2 - 28
       const stroke = e.sensitive ? STROKE_SENSITIVE : STROKE
       const dash = e.sensitive ? '4,4' : null
 
@@ -276,14 +281,14 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
           .attr('stroke-dasharray', dash)
       } else {
         const dx = x2 > x1 ? 1 : -1
-        const cr = Math.min(CORNER_R, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2)
+        const cr = Math.min(CORNER_R, Math.abs(x2 - x1) / 2, Math.abs(armY - y1) / 2, Math.abs(y2 - armY) / 2)
         edgeGroup.append('path')
           .attr('d', [
             `M ${x1} ${y1}`,
-            `L ${x1} ${midY - cr}`,
-            `Q ${x1} ${midY} ${x1 + dx * cr} ${midY}`,
-            `L ${x2 - dx * cr} ${midY}`,
-            `Q ${x2} ${midY} ${x2} ${midY + cr}`,
+            `L ${x1} ${armY - cr}`,
+            `Q ${x1} ${armY} ${x1 + dx * cr} ${armY}`,
+            `L ${x2 - dx * cr} ${armY}`,
+            `Q ${x2} ${armY} ${x2} ${armY + cr}`,
             `L ${x2} ${y2}`,
           ].join(' '))
           .attr('fill', 'none')

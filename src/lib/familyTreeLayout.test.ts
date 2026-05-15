@@ -431,3 +431,73 @@ describe('FamilyTreeView layout — parents centred over children groups', () =>
     expect(Math.abs(drMid - kidsMid)).toBeLessThan(5)
   })
 })
+
+// ─── Regression: root not pinned at start of generation order ─────────────────
+//
+// Real bug from screenshot 141: Hannah (child of Hellen+Neil who are on the
+// far left of the parents row) ended up positioned to the RIGHT of Matt and
+// Caroline in the same generation, because the root's group was force-pinned
+// as the first slot in the row regardless of where her parents actually were.
+//
+// After the fix, the root's group is ordered by parent x like every other
+// group. Pass 2 still skips the root's group from re-centring so the root's
+// own x stays fixed as an anchor.
+
+describe('FamilyTreeView layout — root does not block siblings from sitting under their own parents', () => {
+  it('cousin whose parents are far left of root sits at the far left of root\'s row', () => {
+    // Mini scenario: Matt is root. His parents are Stephen+Maria.
+    // His uncle (Hellen) and Hellen's spouse (Neil) sit far to the left
+    // on the parents row. Their child Hannah is Matt's cousin and should
+    // appear in Matt's row, but to the LEFT of Matt (under Hellen+Neil).
+    const D='d', R='r', He='he', Ne='ne', St='st', Ma='ma', Mt='mt', Ha='ha'
+    addBoth(D, R, 'spouse')
+    addBoth(He, Ne, 'spouse')
+    addBoth(St, Ma, 'spouse')
+    addBoth(He, D, 'child');   addBoth(He, R, 'child')
+    addBoth(St, D, 'child');   addBoth(St, R, 'child')
+    addBoth(Mt, St, 'child');  addBoth(Mt, Ma, 'child')
+    addBoth(Ha, He, 'child');  addBoth(Ha, Ne, 'child')
+
+    const { nodes, edges } = traverseGraph(Mt)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Mt, nodes, norm.parentChild, norm.spouses)
+    const pos  = __test_computeLayout(nodes, gens, norm.parentChild, norm.spouses, Mt)
+
+    // Hannah should sit at the midpoint of Hellen+Neil, regardless of
+    // whether they ended up to the left or right of root.
+    const heNeMid = (pos.get(He)!.x + pos.get(Ne)!.x) / 2
+    expect(Math.abs(pos.get(Ha)!.x - heNeMid)).toBeLessThan(20)
+    // And Hannah should NOT be sandwiched between siblings of Matt — she
+    // should sit on the same side as her parents, away from Matt.
+    const stMaMid = (pos.get(St)!.x + pos.get(Ma)!.x) / 2
+    const hannahDistFromOwnParents = Math.abs(pos.get(Ha)!.x - heNeMid)
+    const hannahDistFromMattsParents = Math.abs(pos.get(Ha)!.x - stMaMid)
+    expect(hannahDistFromOwnParents).toBeLessThan(hannahDistFromMattsParents)
+  })
+
+  it('Matt\'s siblings group with Matt rather than being a separate sibling group', () => {
+    // Matt and Laura are full siblings. They should sit adjacent in the
+    // same sibling group, even though Matt is the root. (Before the fix,
+    // the root was forced into its own group, separating Matt from Laura.)
+    const D='d', R='r', St='st', Ma='ma', Mt='mt', La='la'
+    addBoth(D, R, 'spouse')
+    addBoth(St, Ma, 'spouse')
+    addBoth(St, D, 'child');  addBoth(St, R, 'child')
+    addBoth(Mt, St, 'child'); addBoth(Mt, Ma, 'child')
+    addBoth(La, St, 'child'); addBoth(La, Ma, 'child')
+
+    const { nodes, edges } = traverseGraph(Mt)
+    const norm = __test_normaliseEdges(edges)
+    const gens = __test_assignGenerations(Mt, nodes, norm.parentChild, norm.spouses)
+    const pos  = __test_computeLayout(nodes, gens, norm.parentChild, norm.spouses, Mt)
+
+    // Matt and Laura should be on the same row, close together (one H_GAP apart,
+    // not separated by extra inter-group padding).
+    expect(pos.get(Mt)!.y).toBe(pos.get(La)!.y)
+    const dist = Math.abs(pos.get(Mt)!.x - pos.get(La)!.x)
+    // Within-group neighbour distance: NODE_W (180) + H_GAP (56) = 236
+    // Cross-group neighbour distance: NODE_W (180) + INTER_GROUP_GAP (80) = 260
+    // So distance must be 236 ± couple offsets, not 260+.
+    expect(dist).toBeLessThan(250)
+  })
+})
