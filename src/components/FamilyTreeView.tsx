@@ -43,8 +43,6 @@ import {
   computeLayout,
 } from './FamilyTreeView.layout'
 
-const CORNER_R = 10
-
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface NodeData {
@@ -250,50 +248,154 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
     const STROKE = '#c9a96e'
     const STROKE_SENSITIVE = '#c5b89a'
 
-    // Parent → child: elbow connector from bottom of parent to top of child.
+    // Parent→child connectors are drawn per SIBLING CLUSTER, not per edge.
+    //
+    // A sibling cluster is the set of children sharing the same parent-set.
+    // For each cluster we draw one logical shape:
+    //   1. From each parent: a vertical drop to a meeting point (cluster
+    //      midpoint x, just below the parents' row).
+    //   2. A short vertical from that meeting point to the cluster's
+    //      horizontal "beam" Y, which sits just above the children's row.
+    //   3. The beam spans only the leftmost-to-rightmost child in this
+    //      cluster — NOT across the whole row.
+    //   4. From the beam, a short vertical drop to each child.
+    //
+    // This means adjacent unrelated sibling clusters have visible gaps
+    // between their beams (because each beam stays tight under its own
+    // children). Previously every edge drew its own elbow at one shared
+    // armY, so multiple clusters' beams fused into a single continuous
+    // bar across the row.
+
+    interface ClusterKey { key: string; parents: string[]; children: string[] }
+
+    const clusterMap = new Map<string, ClusterKey>()
     for (const e of parentChild) {
-      const pNode = nodeMap.get(e.parent)
       const cNode = nodeMap.get(e.child)
-      if (!pNode || !cNode) continue
+      if (!cNode) continue
+      // Group children by their set of parents (sorted, joined).
+      const childParentList: string[] = []
+      for (const e2 of parentChild) if (e2.child === e.child) childParentList.push(e2.parent)
+      childParentList.sort()
+      const key = childParentList.join('|') + '→' + cNode.y
+      let cl = clusterMap.get(key)
+      if (!cl) {
+        cl = { key, parents: childParentList, children: [] }
+        clusterMap.set(key, cl)
+      }
+      if (!cl.children.includes(e.child)) cl.children.push(e.child)
+    }
 
-      const x1 = pNode.x
-      const y1 = pNode.y + NODE_H / 2
-      const x2 = cNode.x
-      const y2 = cNode.y - NODE_H / 2
+    // Track which clusters carry a "sensitive" flag — if ANY edge in the
+    // cluster is sensitive, draw the whole cluster as sensitive.
+    const sensitiveClusters = new Set<string>()
+    for (const e of parentChild) {
+      if (!e.sensitive) continue
+      const childParentList: string[] = []
+      for (const e2 of parentChild) if (e2.child === e.child) childParentList.push(e2.parent)
+      childParentList.sort()
+      const cNode = nodeMap.get(e.child)
+      if (cNode) sensitiveClusters.add(childParentList.join('|') + '→' + cNode.y)
+    }
 
-      // If child is somehow not below parent (shouldn't happen with correct gens),
-      // skip drawing rather than producing weird visual.
+    for (const cluster of clusterMap.values()) {
+      // Resolve nodes
+      const parentNodes = cluster.parents.map(p => nodeMap.get(p)).filter((n): n is NodeData => !!n)
+      const childNodes  = cluster.children.map(c => nodeMap.get(c)).filter((n): n is NodeData => !!n)
+      if (parentNodes.length === 0 || childNodes.length === 0) continue
+
+      const sensitive = sensitiveClusters.has(cluster.key)
+      const stroke = sensitive ? STROKE_SENSITIVE : STROKE
+      const dash = sensitive ? '4,4' : null
+
+      const y1 = parentNodes[0].y + NODE_H / 2          // bottom of parents row
+      const y2 = childNodes[0].y - NODE_H / 2           // top of children row
       if (y2 <= y1) continue
 
-      // The horizontal "beam" of the elbow sits closer to the CHILD (not
-      // midway). This keeps T-junctions tight under their own children's
-      // group instead of stretching halfway across the row at one shared
-      // Y — which made multiple unrelated couples' beams visually fuse
-      // into a single continuous bar across the top of the tree.
-      const armY = y2 - 28
-      const stroke = e.sensitive ? STROKE_SENSITIVE : STROKE
-      const dash = e.sensitive ? '4,4' : null
+      // Cluster midpoint x: where the parents' arms converge before
+      // dropping to the children's beam.
+      const childXs = childNodes.map(n => n.x).sort((a, b) => a - b)
+      const childMinX = childXs[0]
+      const childMaxX = childXs[childXs.length - 1]
+      const childMidX = (childMinX + childMaxX) / 2
 
-      if (Math.abs(x1 - x2) < 2) {
+      // For the parents' meeting point we no longer compute parentMidX
+      // separately — the trunk drops at the children's midpoint, and
+      // each parent draws an L-shape to reach it.
+
+      // Two horizontal Y bands:
+      //   parentArmY:   sits just below the parents' row (28px below their
+      //                 bottom). Each parent drops to this Y and the
+      //                 horizontal segment between parents (if multiple)
+      //                 lives here.
+      //   childArmY:    sits just above the children's row (28px above
+      //                 their top). The horizontal beam spanning the
+      //                 cluster's children lives here.
+      // Between parentArmY and childArmY there is a single vertical "trunk"
+      // at the cluster's chosen x (somewhere between parentMidX and
+      // childMidX, leaning toward children for visual alignment).
+      const parentArmY = y1 + 28
+      const childArmY  = y2 - 28
+
+      // Choose a trunk x. Prefer to drop straight down to the cluster's
+      // children midpoint, but if a single parent and a single child sit
+      // on the same x we can simplify.
+      const trunkX = childMidX
+
+      // 1. Parent legs: each parent drops to parentArmY and runs
+      //    horizontally to trunkX.
+      const cornerR = 8
+      for (const p of parentNodes) {
+        if (Math.abs(p.x - trunkX) < 1) {
+          edgeGroup.append('line')
+            .attr('x1', p.x).attr('y1', y1).attr('x2', p.x).attr('y2', parentArmY)
+            .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
+        } else {
+          const dx = trunkX > p.x ? 1 : -1
+          const cr = Math.min(cornerR, Math.abs(trunkX - p.x) / 2, Math.abs(parentArmY - y1) / 2)
+          edgeGroup.append('path')
+            .attr('d', [
+              `M ${p.x} ${y1}`,
+              `L ${p.x} ${parentArmY - cr}`,
+              `Q ${p.x} ${parentArmY} ${p.x + dx * cr} ${parentArmY}`,
+              `L ${trunkX - dx * cr} ${parentArmY}`,
+              `Q ${trunkX} ${parentArmY} ${trunkX} ${parentArmY + cr}`,
+            ].join(' '))
+            .attr('fill', 'none').attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
+        }
+      }
+
+      // 2. Trunk: single vertical from parentArmY to childArmY at trunkX.
+      if (childArmY > parentArmY + 1) {
         edgeGroup.append('line')
-          .attr('x1', x1).attr('y1', y1).attr('x2', x2).attr('y2', y2)
-          .attr('stroke', stroke).attr('stroke-width', 1.5)
-          .attr('stroke-dasharray', dash)
-      } else {
-        const dx = x2 > x1 ? 1 : -1
-        const cr = Math.min(CORNER_R, Math.abs(x2 - x1) / 2, Math.abs(armY - y1) / 2, Math.abs(y2 - armY) / 2)
-        edgeGroup.append('path')
-          .attr('d', [
-            `M ${x1} ${y1}`,
-            `L ${x1} ${armY - cr}`,
-            `Q ${x1} ${armY} ${x1 + dx * cr} ${armY}`,
-            `L ${x2 - dx * cr} ${armY}`,
-            `Q ${x2} ${armY} ${x2} ${armY + cr}`,
-            `L ${x2} ${y2}`,
-          ].join(' '))
-          .attr('fill', 'none')
-          .attr('stroke', stroke).attr('stroke-width', 1.5)
-          .attr('stroke-dasharray', dash)
+          .attr('x1', trunkX).attr('y1', parentArmY)
+          .attr('x2', trunkX).attr('y2', childArmY)
+          .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
+      }
+
+      // 3. Children's horizontal beam at childArmY, spanning the cluster.
+      //    Only draw if there's more than one child OR the single child
+      //    isn't aligned with the trunk.
+      if (childNodes.length > 1) {
+        edgeGroup.append('line')
+          .attr('x1', childMinX).attr('y1', childArmY)
+          .attr('x2', childMaxX).attr('y2', childArmY)
+          .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
+      }
+
+      // 4. Each child drops from the beam (or trunk, if only one child).
+      for (const c of childNodes) {
+        if (Math.abs(c.x - trunkX) < 1 && childNodes.length === 1) {
+          // straight drop from trunk
+          edgeGroup.append('line')
+            .attr('x1', trunkX).attr('y1', childArmY)
+            .attr('x2', c.x).attr('y2', y2)
+            .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
+        } else {
+          edgeGroup.append('line')
+            .attr('x1', c.x).attr('y1', childArmY)
+            .attr('x2', c.x).attr('y2', y2)
+            .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
+        }
       }
     }
 

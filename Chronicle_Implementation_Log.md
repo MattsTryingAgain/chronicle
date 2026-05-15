@@ -933,3 +933,33 @@ The root must group with its siblings by shared parent-set like any other member
 ### Gotcha #39 — Parent→child beams sit close to the child, not at midY
 
 If you move the elbow Y position back to midY, multiple unrelated parent groups in the same generation will all draw their horizontal beams at the same Y, fusing visually into a single bar. Keep `armY = y2 - 28` (or similar, tied to the child top) so each T-junction stays close to its child.
+
+### Family tree — connectors drawn per sibling cluster, not per edge (v1.0.51)
+
+**Problem reported on v1.0.50:** Adding Reece and Rayleigh as Jeff's children, alongside Hellen+Neil's children (Hannah, Emma, Jake) and Stephen+Maria's children (Matt+Caroline, Laura), made the horizontal connector bars between the parents' row and the children's row fuse into one continuous line across the entire width of the tree.
+
+**Root cause:** Each parent→child edge was being drawn as its own elbow with a horizontal "arm" at `y2 - 28` (28px above the child). When multiple unrelated couples in one row dropped to children in the next row, every couple's elbow sat at the **same Y**, and the gaps between them disappeared into a single long bar.
+
+**Fix in `src/components/FamilyTreeView.tsx` — per-cluster trunk rendering:**
+
+Parent→child connectors are no longer drawn one-per-edge. They're now drawn one-per-**sibling cluster**, where a sibling cluster is the set of children sharing the same parent-set. For each cluster:
+
+1. From each parent, a leg drops to `parentArmY = y1 + 28` (just below the parents' row) and runs horizontally to the cluster's **trunk x** (the midpoint of the children's positions).
+2. A single vertical **trunk** runs from `parentArmY` down to `childArmY = y2 - 28` at the trunk x.
+3. The horizontal **children's beam** at `childArmY` spans only from the leftmost child to the rightmost child in **this cluster** — not across the entire row.
+4. Each child drops a short vertical from the beam (or directly from the trunk if the cluster has only one child) into its card.
+
+Adjacent unrelated sibling clusters now have visible vertical-air gaps between their beams, because each beam tightly spans only its own cluster's children. The trunk-and-beam shape also gives each family group a clear visual identity.
+
+**Edge cases handled:**
+- Single parent, single child, same x: the parent's leg, trunk, and child drop all align — drawn as one continuous vertical line.
+- Single parent, single child, different x: parent draws an L-shape to the trunk, no beam is drawn (only one child), child drops straight down.
+- Sensitive flag: if any edge in the cluster is sensitive, the whole cluster is drawn dashed (`stroke-dasharray: 4,4`).
+
+**Tests:** 637/637 passing (no new tests — the change is purely rendering, and the existing layout tests remain valid).
+**TypeScript:** clean.
+**Build:** clean.
+
+### Gotcha #40 — Draw connectors per sibling cluster, not per edge
+
+If you ever revert to drawing one elbow per parent→child edge, multiple unrelated clusters in the same row will fuse into a single horizontal bar at the shared `armY`. The trunk-and-beam pattern in `FamilyTreeView.tsx` (group edges by `parents.sort().join('|') + '→' + childY` and draw one trunk per cluster) is the fix. Removed: the constant `CORNER_R` (was only used by the per-edge drawer; the cluster drawer uses a local `cornerR = 8`).
