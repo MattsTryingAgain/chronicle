@@ -963,3 +963,28 @@ Adjacent unrelated sibling clusters now have visible vertical-air gaps between t
 ### Gotcha #40 — Draw connectors per sibling cluster, not per edge
 
 If you ever revert to drawing one elbow per parent→child edge, multiple unrelated clusters in the same row will fuse into a single horizontal bar at the shared `armY`. The trunk-and-beam pattern in `FamilyTreeView.tsx` (group edges by `parents.sort().join('|') + '→' + childY` and draw one trunk per cluster) is the fix. Removed: the constant `CORNER_R` (was only used by the per-edge drawer; the cluster drawer uses a local `cornerR = 8`).
+
+### Family tree — parent-side beams strictly bounded by their own parents (v1.0.52)
+
+**Problem reported on v1.0.51:** Patricia and Bill (grandparents) are married, so they sit adjacent in the tree. Each is the only child of their own parents (PatriciaMum+PatriciaDad, and BillMum+BillDad). The two parent-beams at `parentArmY` overlapped, looking like one continuous horizontal line — the same fusion issue, just one row higher up the tree.
+
+**Root cause:** v1.0.51 drew each cluster's trunk as an **L-shape from each parent to childMidX**, where childMidX = the cluster's child's x position. If a child is offset from its parents (because the child is part of a couple with a spouse from a different family), the L-shape's horizontal segment extends BEYOND the parents' bounding box. For Patricia (child of PatriciaMum+Dad, but offset right toward Bill), the L-shape's horizontal segment ran from PatriciaMum.x all the way over to Patricia.x — into Bill's parents' territory. Bill's symmetric L did the same in reverse, and the two overlapped.
+
+**Fix in `src/components/FamilyTreeView.tsx` — three-band cluster rendering:**
+
+Each cluster's connector is now three horizontal Y bands instead of two:
+1. **`parentArmY`** (just below parents' row): the parents' beam is strictly bounded by `[parentMinX, parentMaxX]`. Each parent drops a pure vertical leg to this Y; the beam connects parents to each other only. No horizontal segment extends past either parent.
+2. **`junctionY`** (midway between rows): a short horizontal "dogleg" runs from `parentMidX` over to `childMidX`. This is where offset alignment happens.
+3. **`childArmY`** (just above children's row): the children's beam is strictly bounded by `[childMinX, childMaxX]`. Each child drops a pure vertical leg from this Y to its card.
+
+The two trunk verticals sit at `parentMidX` (above the dogleg) and `childMidX` (below the dogleg), so the connector path makes a clean dogleg only where it needs to.
+
+**Visual result:** at `parentArmY` and `childArmY`, every cluster's beam is locked inside its own row's bounding box. Adjacent unrelated couples' beams cannot overlap regardless of how their children are positioned. The dogleg at `junctionY` is free to slope sideways but is bounded by `[parentMidX, childMidX]` per cluster, so even doglegs have a clear gap when clusters are well-separated.
+
+**Tests:** 637/637 passing (no new tests — pure rendering change, layout maths unchanged).
+**TypeScript:** clean.
+**Build:** clean.
+
+### Gotcha #41 — Per-row beams must not extend past their row's bounding box
+
+The connector beams at `parentArmY` and `childArmY` MUST be bounded by `[parentMinX, parentMaxX]` and `[childMinX, childMaxX]` respectively. If a future change makes either beam extend past its row's actual people (e.g. to reach an offset child by drawing an L from each parent), adjacent clusters whose own children are offset toward each other will overlap their beams. The fix is the three-band layout in `FamilyTreeView.tsx`: any horizontal slope between parentMidX and childMidX must live at the **junctionY between the two rows**, never at parentArmY or childArmY.

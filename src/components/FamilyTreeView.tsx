@@ -311,70 +311,82 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
       const y2 = childNodes[0].y - NODE_H / 2           // top of children row
       if (y2 <= y1) continue
 
-      // Cluster midpoint x: where the parents' arms converge before
-      // dropping to the children's beam.
-      const childXs = childNodes.map(n => n.x).sort((a, b) => a - b)
+      // X spans
+      const childXs   = childNodes.map(n => n.x).sort((a, b) => a - b)
       const childMinX = childXs[0]
       const childMaxX = childXs[childXs.length - 1]
       const childMidX = (childMinX + childMaxX) / 2
 
-      // For the parents' meeting point we no longer compute parentMidX
-      // separately — the trunk drops at the children's midpoint, and
-      // each parent draws an L-shape to reach it.
+      const parentXs   = parentNodes.map(n => n.x).sort((a, b) => a - b)
+      const parentMinX = parentXs[0]
+      const parentMaxX = parentXs[parentXs.length - 1]
+      const parentMidX = (parentMinX + parentMaxX) / 2
 
-      // Two horizontal Y bands:
-      //   parentArmY:   sits just below the parents' row (28px below their
-      //                 bottom). Each parent drops to this Y and the
-      //                 horizontal segment between parents (if multiple)
-      //                 lives here.
-      //   childArmY:    sits just above the children's row (28px above
-      //                 their top). The horizontal beam spanning the
-      //                 cluster's children lives here.
-      // Between parentArmY and childArmY there is a single vertical "trunk"
-      // at the cluster's chosen x (somewhere between parentMidX and
-      // childMidX, leaning toward children for visual alignment).
+      // Three horizontal Y bands:
+      //   parentArmY:    just below the parents' row. The horizontal beam
+      //                  here is STRICTLY bounded by parentMinX..parentMaxX
+      //                  — it never extends past the parents themselves.
+      //                  This is the fix for adjacent unrelated couples
+      //                  whose offset spouses (Patricia next to Bill) used
+      //                  to make this beam extend past the parents and
+      //                  overlap the neighbouring couple's beam.
+      //   junctionY:     midway between rows. A short horizontal "dogleg"
+      //                  at this Y connects parentMidX over to childMidX.
+      //                  Without this, the trunk would have to bend inside
+      //                  one of the other Y bands.
+      //   childArmY:     just above the children's row. The horizontal
+      //                  beam here is STRICTLY bounded by childMinX..childMaxX.
       const parentArmY = y1 + 28
       const childArmY  = y2 - 28
+      const junctionY  = (parentArmY + childArmY) / 2
 
-      // Choose a trunk x. Prefer to drop straight down to the cluster's
-      // children midpoint, but if a single parent and a single child sit
-      // on the same x we can simplify.
-      const trunkX = childMidX
-
-      // 1. Parent legs: each parent drops to parentArmY and runs
-      //    horizontally to trunkX.
       const cornerR = 8
-      for (const p of parentNodes) {
-        if (Math.abs(p.x - trunkX) < 1) {
-          edgeGroup.append('line')
-            .attr('x1', p.x).attr('y1', y1).attr('x2', p.x).attr('y2', parentArmY)
-            .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
-        } else {
-          const dx = trunkX > p.x ? 1 : -1
-          const cr = Math.min(cornerR, Math.abs(trunkX - p.x) / 2, Math.abs(parentArmY - y1) / 2)
-          edgeGroup.append('path')
-            .attr('d', [
-              `M ${p.x} ${y1}`,
-              `L ${p.x} ${parentArmY - cr}`,
-              `Q ${p.x} ${parentArmY} ${p.x + dx * cr} ${parentArmY}`,
-              `L ${trunkX - dx * cr} ${parentArmY}`,
-              `Q ${trunkX} ${parentArmY} ${trunkX} ${parentArmY + cr}`,
-            ].join(' '))
-            .attr('fill', 'none').attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
-        }
-      }
 
-      // 2. Trunk: single vertical from parentArmY to childArmY at trunkX.
-      if (childArmY > parentArmY + 1) {
+      // 1. Each parent drops to parentArmY (vertical leg only — never bends
+      //    horizontally past its own column).
+      for (const p of parentNodes) {
         edgeGroup.append('line')
-          .attr('x1', trunkX).attr('y1', parentArmY)
-          .attr('x2', trunkX).attr('y2', childArmY)
+          .attr('x1', p.x).attr('y1', y1).attr('x2', p.x).attr('y2', parentArmY)
           .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
       }
 
-      // 3. Children's horizontal beam at childArmY, spanning the cluster.
-      //    Only draw if there's more than one child OR the single child
-      //    isn't aligned with the trunk.
+      // 2. Parents' beam at parentArmY, spanning ONLY parentMinX → parentMaxX.
+      //    Skipped if there's a single parent.
+      if (parentNodes.length > 1) {
+        edgeGroup.append('line')
+          .attr('x1', parentMinX).attr('y1', parentArmY)
+          .attr('x2', parentMaxX).attr('y2', parentArmY)
+          .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
+      }
+
+      // 3. Trunk down from (parentMidX, parentArmY) to (parentMidX, junctionY).
+      edgeGroup.append('line')
+        .attr('x1', parentMidX).attr('y1', parentArmY)
+        .attr('x2', parentMidX).attr('y2', junctionY)
+        .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
+
+      // 4. Dogleg at junctionY: horizontal from parentMidX over to childMidX
+      //    (skipped if they're already aligned).
+      if (Math.abs(parentMidX - childMidX) > 1) {
+        const dx = childMidX > parentMidX ? 1 : -1
+        const cr = Math.min(cornerR, Math.abs(childMidX - parentMidX) / 2, Math.abs(junctionY - parentArmY) / 2)
+        edgeGroup.append('path')
+          .attr('d', [
+            `M ${parentMidX} ${junctionY - cr}`,
+            `Q ${parentMidX} ${junctionY} ${parentMidX + dx * cr} ${junctionY}`,
+            `L ${childMidX - dx * cr} ${junctionY}`,
+            `Q ${childMidX} ${junctionY} ${childMidX} ${junctionY + cr}`,
+          ].join(' '))
+          .attr('fill', 'none').attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
+      }
+
+      // 5. Trunk down from (childMidX, junctionY) to (childMidX, childArmY).
+      edgeGroup.append('line')
+        .attr('x1', childMidX).attr('y1', junctionY)
+        .attr('x2', childMidX).attr('y2', childArmY)
+        .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
+
+      // 6. Children's beam at childArmY, spanning ONLY childMinX → childMaxX.
       if (childNodes.length > 1) {
         edgeGroup.append('line')
           .attr('x1', childMinX).attr('y1', childArmY)
@@ -382,20 +394,12 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
           .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
       }
 
-      // 4. Each child drops from the beam (or trunk, if only one child).
+      // 7. Each child drops from childArmY to its card top.
       for (const c of childNodes) {
-        if (Math.abs(c.x - trunkX) < 1 && childNodes.length === 1) {
-          // straight drop from trunk
-          edgeGroup.append('line')
-            .attr('x1', trunkX).attr('y1', childArmY)
-            .attr('x2', c.x).attr('y2', y2)
-            .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
-        } else {
-          edgeGroup.append('line')
-            .attr('x1', c.x).attr('y1', childArmY)
-            .attr('x2', c.x).attr('y2', y2)
-            .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
-        }
+        edgeGroup.append('line')
+          .attr('x1', c.x).attr('y1', childArmY)
+          .attr('x2', c.x).attr('y2', y2)
+          .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
       }
     }
 
