@@ -988,3 +988,35 @@ The two trunk verticals sit at `parentMidX` (above the dogleg) and `childMidX` (
 ### Gotcha #41 — Per-row beams must not extend past their row's bounding box
 
 The connector beams at `parentArmY` and `childArmY` MUST be bounded by `[parentMinX, parentMaxX]` and `[childMinX, childMaxX]` respectively. If a future change makes either beam extend past its row's actual people (e.g. to reach an offset child by drawing an L from each parent), adjacent clusters whose own children are offset toward each other will overlap their beams. The fix is the three-band layout in `FamilyTreeView.tsx`: any horizontal slope between parentMidX and childMidX must live at the **junctionY between the two rows**, never at parentArmY or childArmY.
+
+### Family tree — staggered dogleg Y values + single trunk for spouse-couples (v1.0.53)
+
+**Problems reported on v1.0.52:**
+1. **Adjacent clusters' doglegs fuse at the same Y.** When a couple bridges two grandparent families (e.g. Stephen+Maria, where Stephen's parents are Diane+Ralph and Maria's are Bill+Patricia), the layout forces them to sit between the two grandparent kids-groups. Their children (Matt, Laura) are anchored under the root at x=0, so the dogleg between Stephen+Maria's couple midpoint and the children's midpoint has to traverse a huge horizontal distance — and it does so at the same junctionY as the neighbouring cluster Hellen+Neil's dogleg. The two doglegs visually fused.
+2. **"Extra bar" below married-couple parents.** Patricia and Bill (a married couple) each had their own vertical leg dropping from their card to parentArmY, plus the parents' beam between them, plus the trunk from parentMidX. Three close-together vertical lines below the couple looked like multiple parallel bars instead of one clean trunk.
+
+**Fix in `src/components/FamilyTreeView.tsx`:**
+
+1. **Per-cluster staggered `junctionY`.** Clusters are sorted left-to-right by children's midpoint x and indexed 0, 1, 2, ... within each generation. Each cluster's `junctionY` lands at one of 5 fractional bands (1/6, 2/6, 3/6, 4/6, 5/6) between `parentArmY` and `childArmY`. This guarantees that adjacent clusters' horizontal dogleg segments live at different Y values, never on a shared line. The vertical trunks above/below each dogleg are short or long accordingly.
+2. **Single trunk for spouse-couple parents.** If a cluster's two parents are a married couple sitting adjacent (detected via `isSpousePair` against the `spouses` list), the cluster skips the per-parent vertical legs and the `parentArmY` beam entirely — the spouse line at the card's mid-Y already shows the pairing. Instead, a single trunk drops from the couple's midpoint at the card's bottom edge straight down to `junctionY`. Cleaner visual, no triplet of close vertical lines.
+
+**Layout fundamentals unchanged** (no test changes). The structural issue that Stephen+Maria's couple sits 800px to the left of their children Matt+Laura is a real layout constraint — the couple is wedged between Diane+Ralph's other kids and Bill+Patricia's other kids and can't slide past either by Pass 2's neighbour-constraint. The dogleg correctly bridges that distance. With the staggered junctionY, the dogleg's horizontal segment sits at a unique Y and no longer fuses with adjacent clusters' doglegs.
+
+**Tests:** 637/637 passing. (No new tests — pure rendering change.)
+**TypeScript:** clean.
+**Build:** clean.
+
+### Gotcha #42 — Adjacent clusters need staggered junctionY
+
+When two adjacent unrelated clusters both need long doglegs in opposite directions (e.g. one couple's children are far right of the couple, neighbouring couple's children are far left), their horizontal dogleg segments will visually fuse if they share a Y line. The fix is per-cluster staggered `junctionY` using `((cIdx % STAGGER_BANDS) + 1) / (STAGGER_BANDS + 1)` of the available vertical space. Currently `STAGGER_BANDS = 5`.
+
+### Future work — cross-family couples drift far from their children
+
+The remaining structural issue: a couple where each spouse is from a different family (like Stephen+Maria, whose Matt is the tree root) gets positioned at the **average of all four grandparents' x positions**, which can sit far from where their own children actually land. Pass 2 cannot slide the couple over because they're constrained by their siblings' groups on either side.
+
+Solutions to consider for a future pass:
+- Allow Pass 2 to push entire neighbour chains rightward when an upper-generation cluster needs to slide.
+- Treat root-ancestor clusters as having higher priority during overlap resolution — they can displace non-ancestor neighbours.
+- Special-case cross-family couples: use the couple's children-midpoint as their primary target, not the grandparents-midpoint.
+
+The current staggered-junctionY rendering masks the issue visually but doesn't fix the geometry.

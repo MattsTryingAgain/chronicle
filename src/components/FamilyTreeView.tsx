@@ -297,7 +297,32 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
       if (cNode) sensitiveClusters.add(childParentList.join('|') + '→' + cNode.y)
     }
 
-    for (const cluster of clusterMap.values()) {
+    // Build a quick "is this pair a spouse couple" lookup.
+    const spousePairKey = new Set<string>()
+    for (const s of spouses) {
+      const a = s.a < s.b ? s.a : s.b
+      const b = s.a < s.b ? s.b : s.a
+      spousePairKey.add(`${a}|${b}`)
+    }
+    const isSpousePair = (p1: string, p2: string): boolean => {
+      const a = p1 < p2 ? p1 : p2
+      const b = p1 < p2 ? p2 : p1
+      return spousePairKey.has(`${a}|${b}`)
+    }
+
+    // Sort clusters left-to-right by their children's midpoint so we can
+    // stagger childArmY/parentArmY across adjacent clusters. This breaks
+    // up the "one continuous bar" illusion when several unrelated clusters
+    // sit at the same generation and their beams would otherwise share a Y.
+    const sortedClusters = Array.from(clusterMap.values()).sort((a, b) => {
+      const ax = (a.children.map(c => nodeMap.get(c)?.x ?? 0).reduce((s, x) => s + x, 0)) / a.children.length
+      const bx = (b.children.map(c => nodeMap.get(c)?.x ?? 0).reduce((s, x) => s + x, 0)) / b.children.length
+      return ax - bx
+    })
+
+    // Index clusters per (childY) so the stagger restarts at each generation.
+    const clusterIdxAtY = new Map<number, number>()
+    for (const cluster of sortedClusters) {
       // Resolve nodes
       const parentNodes = cluster.parents.map(p => nodeMap.get(p)).filter((n): n is NodeData => !!n)
       const childNodes  = cluster.children.map(c => nodeMap.get(c)).filter((n): n is NodeData => !!n)
@@ -311,6 +336,10 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
       const y2 = childNodes[0].y - NODE_H / 2           // top of children row
       if (y2 <= y1) continue
 
+      // Per-generation cluster index for staggering. 0, 1, 2, ...
+      const cIdx = clusterIdxAtY.get(y2) ?? 0
+      clusterIdxAtY.set(y2, cIdx + 1)
+
       // X spans
       const childXs   = childNodes.map(n => n.x).sort((a, b) => a - b)
       const childMinX = childXs[0]
@@ -322,51 +351,49 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
       const parentMaxX = parentXs[parentXs.length - 1]
       const parentMidX = (parentMinX + parentMaxX) / 2
 
-      // Three horizontal Y bands:
-      //   parentArmY:    just below the parents' row. The horizontal beam
-      //                  here is STRICTLY bounded by parentMinX..parentMaxX
-      //                  — it never extends past the parents themselves.
-      //                  This is the fix for adjacent unrelated couples
-      //                  whose offset spouses (Patricia next to Bill) used
-      //                  to make this beam extend past the parents and
-      //                  overlap the neighbouring couple's beam.
-      //   junctionY:     midway between rows. A short horizontal "dogleg"
-      //                  at this Y connects parentMidX over to childMidX.
-      //                  Without this, the trunk would have to bend inside
-      //                  one of the other Y bands.
-      //   childArmY:     just above the children's row. The horizontal
-      //                  beam here is STRICTLY bounded by childMinX..childMaxX.
-      const parentArmY = y1 + 28
-      const childArmY  = y2 - 28
-      const junctionY  = (parentArmY + childArmY) / 2
+      const parentsAreCouple = parentNodes.length === 2
+        && isSpousePair(parentNodes[0].pubkey, parentNodes[1].pubkey)
+        && parentNodes[0].y === parentNodes[1].y
 
-      const cornerR = 8
+      // parentArmY/childArmY are constant per generation pair so vertical
+      // drops are uniform. junctionY is STAGGERED per cluster: every cluster
+      // gets its own unique Y for its dogleg. This prevents the horizontal
+      // dogleg segments of adjacent clusters from sharing a Y line and
+      // visually fusing into one continuous bar — the issue users see when
+      // a cluster needs to dogleg far horizontally (e.g. when a couple's
+      // children are far from the couple's grandparent midpoint).
+      const parentArmY = y1 + 24
+      const childArmY  = y2 - 24
+      const span = childArmY - parentArmY
+      // Up to ~6 cluster bands fit in the vertical span.
+      const STAGGER_BANDS = 5
+      const stagger = ((cIdx % STAGGER_BANDS) + 1) / (STAGGER_BANDS + 1)  // 1/6, 2/6, 3/6, 4/6, 5/6
+      const junctionY  = parentArmY + span * stagger
 
-      // 1. Each parent drops to parentArmY (vertical leg only — never bends
-      //    horizontally past its own column).
-      for (const p of parentNodes) {
+      const cornerR = 6
+
+      if (parentsAreCouple) {
         edgeGroup.append('line')
-          .attr('x1', p.x).attr('y1', y1).attr('x2', p.x).attr('y2', parentArmY)
+          .attr('x1', parentMidX).attr('y1', y1).attr('x2', parentMidX).attr('y2', junctionY)
+          .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
+      } else {
+        for (const p of parentNodes) {
+          edgeGroup.append('line')
+            .attr('x1', p.x).attr('y1', y1).attr('x2', p.x).attr('y2', parentArmY)
+            .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
+        }
+        if (parentNodes.length > 1) {
+          edgeGroup.append('line')
+            .attr('x1', parentMinX).attr('y1', parentArmY)
+            .attr('x2', parentMaxX).attr('y2', parentArmY)
+            .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
+        }
+        edgeGroup.append('line')
+          .attr('x1', parentMidX).attr('y1', parentArmY)
+          .attr('x2', parentMidX).attr('y2', junctionY)
           .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
       }
 
-      // 2. Parents' beam at parentArmY, spanning ONLY parentMinX → parentMaxX.
-      //    Skipped if there's a single parent.
-      if (parentNodes.length > 1) {
-        edgeGroup.append('line')
-          .attr('x1', parentMinX).attr('y1', parentArmY)
-          .attr('x2', parentMaxX).attr('y2', parentArmY)
-          .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
-      }
-
-      // 3. Trunk down from (parentMidX, parentArmY) to (parentMidX, junctionY).
-      edgeGroup.append('line')
-        .attr('x1', parentMidX).attr('y1', parentArmY)
-        .attr('x2', parentMidX).attr('y2', junctionY)
-        .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
-
-      // 4. Dogleg at junctionY: horizontal from parentMidX over to childMidX
-      //    (skipped if they're already aligned).
       if (Math.abs(parentMidX - childMidX) > 1) {
         const dx = childMidX > parentMidX ? 1 : -1
         const cr = Math.min(cornerR, Math.abs(childMidX - parentMidX) / 2, Math.abs(junctionY - parentArmY) / 2)
@@ -380,13 +407,11 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
           .attr('fill', 'none').attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
       }
 
-      // 5. Trunk down from (childMidX, junctionY) to (childMidX, childArmY).
       edgeGroup.append('line')
         .attr('x1', childMidX).attr('y1', junctionY)
         .attr('x2', childMidX).attr('y2', childArmY)
         .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
 
-      // 6. Children's beam at childArmY, spanning ONLY childMinX → childMaxX.
       if (childNodes.length > 1) {
         edgeGroup.append('line')
           .attr('x1', childMinX).attr('y1', childArmY)
@@ -394,7 +419,6 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
           .attr('stroke', stroke).attr('stroke-width', 1.5).attr('stroke-dasharray', dash)
       }
 
-      // 7. Each child drops from childArmY to its card top.
       for (const c of childNodes) {
         edgeGroup.append('line')
           .attr('x1', c.x).attr('y1', childArmY)
