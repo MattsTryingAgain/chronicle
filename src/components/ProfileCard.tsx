@@ -74,7 +74,10 @@ function ClaimsPanel({
                     )}
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 2 }}>
-                    {c.claimantPubkey.slice(0, 20)}…
+                    {(() => {
+                      const claimant = store.getPerson(c.claimantPubkey)
+                      return claimant ? claimant.displayName : 'Family member'
+                    })()}
                   </div>
                 </div>
                 <ScoreBar score={c.confidenceScore} />
@@ -126,7 +129,7 @@ function RelationshipsSection({ pubkey }: { pubkey: string }) {
           <div key={rel.eventId} style={{ marginBottom: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
               <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--navy)' }}>
-                {other?.displayName ?? rel.relatedPubkey.slice(0, 16) + '…'}
+                {other?.displayName ?? 'Unknown'}
               </span>
               <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
                 {relTypeLabel(rel.relationship)}

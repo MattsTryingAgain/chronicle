@@ -165,7 +165,7 @@ function ParentChildMeta({ meta, onChange }: { meta: RelationshipMeta; onChange:
 
 export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete, onCancel }: AddPersonModalProps) {
   const { t } = useTranslation()
-  const { session, publishEvent } = useApp()
+  const { session, publishEvent, contacts } = useApp()
 
   const isEdit = mode === 'edit'
   const existingClaims = isEdit && editPerson ? store.getClaimsForPerson(editPerson.pubkey) : []
@@ -173,6 +173,12 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
     ? getRelationshipsFor(editPerson.pubkey)
         .filter(r => r.subjectPubkey === editPerson.pubkey && !r.retracted)
     : []
+
+  // In edit mode, the name is locked for connected contacts — their chosen name
+  // takes precedence. For ancestors and local entries it's freely editable.
+  const isConnectedContact = isEdit && editPerson
+    ? contacts.some(c => c.npub === editPerson.pubkey)
+    : false
 
   const initFieldValues = (): Partial<Record<FactField, string>> => {
     if (!isEdit) return {}
@@ -241,6 +247,12 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
 
       if (isEdit && editPerson) {
         person = editPerson
+        // Update display name in store if it was changed (only allowed for non-contacts)
+        if (!isConnectedContact && name.trim() && name.trim() !== editPerson.displayName) {
+          const updated: Person = { ...editPerson, displayName: name.trim() }
+          store.upsertPerson(updated)
+          person = updated
+        }
       } else {
         let pubkey: string; let isLiving: boolean
         if (mode === 'self' && selfPubkey) { pubkey = selfPubkey; isLiving = true }
@@ -323,7 +335,7 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
       setSaving(false)
     }
   }, [name, fieldValues, evidence, mode, isEdit, editPerson, existingClaims, selfPubkey,
-      relRows, session, publishEvent, persistNow, onSave, t])
+      relRows, session, publishEvent, persistNow, onSave, t, isConnectedContact])
 
   const modalTitle = isEdit
     ? `Edit ${editPerson?.displayName ?? 'person'}`
@@ -342,12 +354,31 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
         <div className="modal-body">
           {error && <div className="alert alert-danger" style={{ marginBottom: 'var(--space-md)' }}>{error}</div>}
 
+          {/* Name field — always shown.
+               In edit mode it's editable for ancestors; locked for connected contacts
+               (their chosen name takes precedence over anything we'd set locally). */}
           {!isEdit && (
             <div className="form-group">
               <label htmlFor="ap-name">{t('profile.addPerson.nameLabel')}</label>
               <input id="ap-name" className="form-control" value={name}
                 onChange={e => setName(e.target.value)}
                 placeholder={t('profile.addPerson.namePlaceholder')} autoFocus />
+            </div>
+          )}
+          {isEdit && (
+            <div className="form-group">
+              <label htmlFor="ap-name">{t('profile.addPerson.nameLabel')}</label>
+              {isConnectedContact ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input id="ap-name" className="form-control" value={name} disabled
+                    style={{ background: 'var(--cream)', color: 'var(--ink-muted)', cursor: 'not-allowed' }} />
+                  <span style={{ fontSize: 12, color: 'var(--ink-muted)', whiteSpace: 'nowrap' }}>Set by them</span>
+                </div>
+              ) : (
+                <input id="ap-name" className="form-control" value={name}
+                  onChange={e => setName(e.target.value)}
+                  placeholder={t('profile.addPerson.namePlaceholder')} autoFocus />
+              )}
             </div>
           )}
 

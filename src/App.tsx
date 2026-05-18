@@ -164,7 +164,7 @@ function MainShell() {
 
       <main className="app-content" style={{ padding: tab === 'graph' ? 0 : undefined, display: tab === 'graph' ? 'flex' : undefined, flexDirection: tab === 'graph' ? 'column' : undefined, overflow: tab === 'graph' ? 'hidden' : undefined }}>
         {tab === 'tree' && <TreeView onSelectPerson={(pk) => { setGraphRoot(pk); setTab('graph') }} />}
-        {tab === 'graph' && graphRoot && <FamilyTreeView rootPubkey={graphRoot} onSelectPerson={(pk) => setGraphRoot(pk)} onEditPerson={(pk) => { setTab('tree'); /* TreeView will open edit modal via selectedPubkey */ setGraphRoot(pk) }} />}
+        {tab === 'graph' && graphRoot && <FamilyTreeView rootPubkey={graphRoot} onSelectPerson={(pk) => setGraphRoot(pk)} />}
         {tab === 'graph' && !graphRoot && (
           <div className="p-4 text-muted">
             {t('tree.noRoot', { defaultValue: 'Select a person from the People list to view their family tree.' })}

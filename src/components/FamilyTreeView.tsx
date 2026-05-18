@@ -35,7 +35,9 @@ import * as d3 from 'd3'
 import { store } from '../lib/storage'
 import { traverseGraph } from '../lib/graph'
 import { resolveAllFields } from '../lib/confidence'
+import { useApp } from '../context/AppContext'
 import type { Person } from '../types/chronicle'
+import { PersonProfileModal } from './PersonProfileModal'
 import {
   NODE_W, NODE_H,
   normaliseEdges,
@@ -59,7 +61,6 @@ interface NodeData {
 interface FamilyTreeViewProps {
   rootPubkey: string
   onSelectPerson?: (pubkey: string) => void
-  onEditPerson?: (pubkey: string) => void
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -80,7 +81,7 @@ function buildNodeData(pubkey: string): NodeData {
   const died = resolutions.find(r => r.field === 'died')?.winningClaim?.value ?? null
   return {
     pubkey,
-    displayName: person?.displayName ?? pubkey.slice(0, 12) + '…',
+    displayName: person?.displayName ?? 'Unknown',
     birthYear: extractYear(born),
     deathYear: extractYear(died),
     hasConflict,
@@ -95,15 +96,24 @@ function buildNodeData(pubkey: string): NodeData {
 
 interface ActionPanelProps {
   pubkey: string
+  rootPubkey: string
   onClose: () => void
-  onEdit: (pubkey: string) => void
-  onViewInList: (pubkey: string) => void
   onMakeRoot: (pubkey: string) => void
+  onTreeRefresh: () => void
+  onPersonDeleted: (pubkey: string) => void
 }
 
-function ActionPanel({ pubkey, onClose, onEdit, onViewInList, onMakeRoot }: ActionPanelProps) {
+function ActionPanel({ pubkey, rootPubkey, onClose, onMakeRoot, onTreeRefresh, onPersonDeleted }: ActionPanelProps) {
+  const { contacts } = useApp()
+  const [profileModal, setProfileModal] = useState<'view' | 'edit' | null>(null)
+
   const person = store.getPerson(pubkey)
   if (!person) return null
+
+  // A person is a "connected contact" if their pubkey matches a known contact's npub.
+  const isContact = contacts.some(c => c.npub === pubkey)
+  const isRoot = pubkey === rootPubkey
+
   const initials = person.displayName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
   const claims = store.getClaimsForPerson(pubkey)
   const endorsements = store.getAllEndorsements()
@@ -113,42 +123,64 @@ function ActionPanel({ pubkey, onClose, onEdit, onViewInList, onMakeRoot }: Acti
   const place = resolutions.find(r => r.field === 'birthplace')?.winningClaim?.value
 
   return (
-    <div style={{
-      position: 'absolute', top: 0, right: 0,
-      width: 280, height: '100%', background: '#fff',
-      borderLeft: '1px solid var(--border-soft)',
-      boxShadow: '-4px 0 24px rgba(15,30,53,0.08)',
-      display: 'flex', flexDirection: 'column', zIndex: 10,
-    }}>
-      <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid var(--border-soft)', background: 'var(--cream)', position: 'relative' }}>
-        <button onClick={onClose} style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-muted)', fontSize: 18, lineHeight: 1, padding: 4 }}>✕</button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'var(--navy)', color: 'var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, flexShrink: 0 }}>{initials}</div>
-          <div>
-            <div style={{ fontWeight: 600, fontSize: 16, color: 'var(--navy)', fontFamily: 'var(--font-display)' }}>{person.displayName}</div>
-            <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 2 }}>
-              {person.isLiving ? 'Living' : 'Ancestor'}{born && ` · b. ${born}`}{died && ` · d. ${died}`}
+    <>
+      <div style={{
+        position: 'absolute', top: 0, right: 0,
+        width: 280, height: '100%', background: '#fff',
+        borderLeft: '1px solid var(--border-soft)',
+        boxShadow: '-4px 0 24px rgba(15,30,53,0.08)',
+        display: 'flex', flexDirection: 'column', zIndex: 10,
+      }}>
+        <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid var(--border-soft)', background: 'var(--cream)', position: 'relative' }}>
+          <button onClick={onClose} style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-muted)', fontSize: 18, lineHeight: 1, padding: 4 }}>✕</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'var(--navy)', color: 'var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, flexShrink: 0 }}>{initials}</div>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 16, color: 'var(--navy)', fontFamily: 'var(--font-display)' }}>{person.displayName}</div>
+              <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 2 }}>
+                {person.isLiving ? 'Living' : 'Ancestor'}{born && ` · b. ${born}`}{died && ` · d. ${died}`}
+              </div>
+              {place && <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>{place}</div>}
+              {isContact && (
+                <div style={{ fontSize: 11, color: 'var(--gold)', fontWeight: 500, marginTop: 3 }}>
+                  ● Connected family member
+                </div>
+              )}
             </div>
-            {place && <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>{place}</div>}
           </div>
         </div>
+        <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, flex: 1, overflowY: 'auto' }}>
+          <ActionButton icon="✏️" label="Edit information"  description="Update facts, dates and relationships" onClick={() => setProfileModal('edit')} />
+          <ActionButton icon="📋" label="View full profile" description="See all details and history"            onClick={() => setProfileModal('view')} />
+          <div style={{ borderTop: '1px solid var(--border-soft)', margin: '4px 0' }} />
+          <ActionButton icon="🖼"  label="Photos & media"    description="View and add photos for this person"   onClick={() => {}} comingSoon />
+          <ActionButton icon="📖" label="Stories"            description="Personal stories and memories"         onClick={() => {}} comingSoon />
+          <ActionButton icon="📄" label="Documents"          description="Birth certificates, records and sources" onClick={() => {}} comingSoon />
+          <ActionButton icon="🌍" label="Timeline"           description="Life events on a timeline"             onClick={() => {}} comingSoon />
+        </div>
+        {/* "Make root" only shown for connected contacts — seeing the tree from
+            another family member's perspective is the use case. For ancestors
+            and other local entries, roots are changed via the People list. */}
+        {isContact && !isRoot && (
+          <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-soft)' }}>
+            <button className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center' }}
+              onClick={() => { onMakeRoot(pubkey); onClose() }}>
+              View tree from {person.displayName}'s perspective
+            </button>
+          </div>
+        )}
       </div>
-      <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, flex: 1, overflowY: 'auto' }}>
-        <ActionButton icon="✏️" label="Edit information"  description="Update facts, dates and relationships" onClick={() => onEdit(pubkey)} />
-        <ActionButton icon="📋" label="View full profile" description="See all claims and conflict history"   onClick={() => onViewInList(pubkey)} />
-        <div style={{ borderTop: '1px solid var(--border-soft)', margin: '4px 0' }} />
-        <ActionButton icon="🖼"  label="Photos & media"    description="View and add photos for this person"   onClick={() => {}} comingSoon />
-        <ActionButton icon="📖" label="Stories"            description="Personal stories and memories"         onClick={() => {}} comingSoon />
-        <ActionButton icon="📄" label="Documents"          description="Birth certificates, records and sources" onClick={() => {}} comingSoon />
-        <ActionButton icon="🌍" label="Timeline"           description="Life events on a timeline"             onClick={() => {}} comingSoon />
-      </div>
-      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-soft)' }}>
-        <button className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center' }}
-          onClick={() => { onMakeRoot(pubkey); onClose() }}>
-          Make this person the tree root
-        </button>
-      </div>
-    </div>
+
+      {profileModal && (
+        <PersonProfileModal
+          pubkey={pubkey}
+          startInEditMode={profileModal === 'edit'}
+          onClose={() => setProfileModal(null)}
+          onSaved={() => { onTreeRefresh(); setProfileModal(null) }}
+          onDeleted={(pk) => { onPersonDeleted(pk); onClose() }}
+        />
+      )}
+    </>
   )
 }
 
@@ -193,15 +225,21 @@ function LegendItem({ color, dash, label }: { color: string; dash?: string; labe
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerson }: FamilyTreeViewProps) {
+export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTreeViewProps) {
   const svgRef       = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [nodeCount, setNodeCount]       = useState(0)
   const [truncated, setTruncated]       = useState(false)
   const [selectedPubkey, setSelectedPubkey] = useState<string | null>(null)
+  const [treeVersion, setTreeVersion] = useState(0)
 
-  const handleClosePanel = useCallback(() => setSelectedPubkey(null), [])
-  const handleMakeRoot   = useCallback((pk: string) => onSelectPerson?.(pk), [onSelectPerson])
+  const handleClosePanel  = useCallback(() => setSelectedPubkey(null), [])
+  const handleMakeRoot    = useCallback((pk: string) => onSelectPerson?.(pk), [onSelectPerson])
+  const handleTreeRefresh = useCallback(() => setTreeVersion(v => v + 1), [])
+  const handlePersonDeleted = useCallback((pk: string) => {
+    if (pk === selectedPubkey) setSelectedPubkey(null)
+    setTreeVersion(v => v + 1)
+  }, [selectedPubkey])
 
   const draw = useCallback(() => {
     if (!svgRef.current || !containerRef.current) return
@@ -533,7 +571,7 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
         .translate(width / 2 - scale * cx, height / 2 - scale * cy)
         .scale(scale))
     }
-  }, [rootPubkey, selectedPubkey])
+  }, [rootPubkey, selectedPubkey, treeVersion])
 
   useEffect(() => { draw() }, [draw])
   useEffect(() => {
@@ -565,10 +603,11 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson, onEditPerso
         {selectedPubkey && (
           <ActionPanel
             pubkey={selectedPubkey}
+            rootPubkey={rootPubkey}
             onClose={handleClosePanel}
-            onEdit={pk => { onEditPerson?.(pk); handleClosePanel() }}
-            onViewInList={pk => { onSelectPerson?.(pk) }}
             onMakeRoot={handleMakeRoot}
+            onTreeRefresh={handleTreeRefresh}
+            onPersonDeleted={handlePersonDeleted}
           />
         )}
       </div>
