@@ -51,7 +51,13 @@ export interface BroadcastSettings {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-export const LOCAL_RELAY_URL = 'ws://127.0.0.1:4869'
+// Relay port is 4869 for the primary instance, 4870 for --instance=2, etc.
+// In Electron the preload exposes the correct port; in browser dev mode use 4869.
+const _relayPort: number =
+  typeof window !== 'undefined' && (window as any).chronicleElectron?.relayPort
+    ? (window as any).chronicleElectron.relayPort
+    : 4869
+export const LOCAL_RELAY_URL = `ws://127.0.0.1:${_relayPort}`
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -294,7 +300,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const allowlistAdd = useCallback(async (npubOrHex: string): Promise<void> => {
     try {
-      await fetch('http://127.0.0.1:4869/allowlist/add', {
+      await fetch(`http://127.0.0.1:${_relayPort}/allowlist/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pubkey: npubOrHex }),

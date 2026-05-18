@@ -30,15 +30,46 @@ process.on('uncaughtException', (err) => {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const RELAY_PORT = 4869
 const RELAY_HOST = '127.0.0.1'
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
-// ─── Single instance lock ─────────────────────────────────────────────────────
-// Prevent multiple copies of the app opening at the same time.
-// If a second instance is launched, focus the existing window instead.
+// ─── Multi-instance support ───────────────────────────────────────────────────
+// Launch with --instance=2 (or --instance=3 etc.) to run a second independent
+// Chronicle instance on the same machine. Each instance gets:
+//   - Its own userData directory  (Chronicle, Chronicle-2, Chronicle-3 ...)
+//   - Its own relay port          (4869, 4870, 4871 ...)
+//   - Its own single-instance lock key (so two instances can coexist)
+//   - Its own window title and session partition
+//
+// Usage (from a terminal after building):
+//   Windows:  .\Chronicle.exe --instance=2
+//   macOS:    open -n Chronicle.app --args --instance=2
+//   Linux:    ./Chronicle --instance=2
+//
+// Both instances connect to each other over ws://127.0.0.1:<port> — the same
+// WebSocket relay mechanism used for remote connections, so anything that works
+// locally will work when family members connect from different machines.
 
-const gotLock = app.requestSingleInstanceLock()
+const instanceArg = process.argv.find(a => a.startsWith('--instance='))
+const instanceNum = instanceArg ? parseInt(instanceArg.split('=')[1], 10) : 1
+const isSecondaryInstance = instanceNum > 1
+
+const RELAY_PORT = 4869 + (instanceNum - 1)  // 4869, 4870, 4871 ...
+
+// Override userData path for secondary instances so each has its own identity,
+// key material, and SQLite database. Primary instance keeps the default path.
+if (isSecondaryInstance) {
+  const defaultUserData = app.getPath('userData')
+  // e.g. C:\Users\Matt\AppData\Roaming\Chronicle  ->  ...\Chronicle-2
+  app.setPath('userData', `${defaultUserData}-${instanceNum}`)
+}
+
+// ─── Single instance lock ─────────────────────────────────────────────────────
+// Each instance number gets its own lock key so they can coexist side-by-side.
+// Within the same instance number, the lock still prevents accidental duplicates.
+
+const lockKey = isSecondaryInstance ? { additionalData: `instance-${instanceNum}` } : {}
+const gotLock = app.requestSingleInstanceLock(lockKey)
 
 if (!gotLock) {
   // Another instance is already running — quit immediately without creating any window
@@ -300,12 +331,17 @@ function stopRelay() {
 let mainWindow = null
 
 function createWindow() {
+  const windowTitle = isSecondaryInstance ? `Chronicle (Instance ${instanceNum})` : 'Chronicle'
+  const sessionPartition = isSecondaryInstance
+    ? `persist:chronicle-${instanceNum}`
+    : 'persist:chronicle'
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    title: 'Chronicle',
+    title: windowTitle,
     backgroundColor: '#0a1628',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
@@ -313,7 +349,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      partition: 'persist:chronicle',
+      partition: sessionPartition,
     },
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
   })

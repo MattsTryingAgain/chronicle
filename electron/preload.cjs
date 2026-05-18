@@ -20,6 +20,18 @@ contextBridge.exposeInMainWorld('chronicleElectron', {
   /** Whether running in Electron (vs browser) */
   isElectron: true,
 
+  /** Instance number (1 = primary, 2+ = secondary). Used to select relay port. */
+  instanceNum: parseInt(
+    (process.argv.find(a => a.startsWith('--instance=')) || '--instance=1').split('=')[1],
+    10
+  ),
+
+  /** Relay port for this instance (4869 for primary, 4870 for instance 2, etc.) */
+  relayPort: 4869 + parseInt(
+    (process.argv.find(a => a.startsWith('--instance=')) || '--instance=1').split('=')[1],
+    10
+  ) - 1,
+
   /** Open a URL in the system browser */
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
 
