@@ -22,6 +22,26 @@ import {
 } from './graph'
 import type { RelationshipClaim, Acknowledgement, SamePersonLink } from './graph'
 import { schemaVersionChecker } from './schemaVersion'
+import { parseJoinRequest, parseJoinAccept } from './joinRequest'
+import type { JoinRequest, JoinAccept } from './joinRequest'
+
+// ── Join request callbacks ────────────────────────────────────────────────────
+// AppContext registers these so the UI can react to incoming handshake events
+// without relaySync needing to know about React state.
+
+type JoinRequestHandler = (req: JoinRequest) => void
+type JoinAcceptHandler  = (accept: JoinAccept) => void
+
+let onJoinRequestReceived: JoinRequestHandler | null = null
+let onJoinAcceptReceived:  JoinAcceptHandler  | null = null
+
+export function setJoinRequestHandler(fn: JoinRequestHandler): void {
+  onJoinRequestReceived = fn
+}
+
+export function setJoinAcceptHandler(fn: JoinAcceptHandler): void {
+  onJoinAcceptReceived = fn
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -155,6 +175,16 @@ export function ingestEvent(event: ChronicleEvent): boolean {
       case EventKind.SAME_PERSON_LINK:
         ingestSamePersonLink(event)
         break
+      case EventKind.JOIN_REQUEST: {
+        const req = parseJoinRequest(event)
+        if (req && onJoinRequestReceived) onJoinRequestReceived(req)
+        break
+      }
+      case EventKind.JOIN_ACCEPT: {
+        const accept = parseJoinAccept(event)
+        if (accept && onJoinAcceptReceived) onJoinAcceptReceived(accept)
+        break
+      }
       default:
         break
     }

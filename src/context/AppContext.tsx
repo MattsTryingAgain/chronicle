@@ -26,7 +26,8 @@ import { generateUserKeyMaterial, importKeyMaterial, nsecToHex } from '../lib/ke
 import { encryptWithPassword, decryptWithPassword } from '../lib/storage'
 import { RelayPool, type RelayStatus } from '../lib/relay'
 import { broadcastQueue } from '../lib/queue'
-import { startSync, fetchOnConnect } from '../lib/relaySync'
+import { startSync, fetchOnConnect, setJoinRequestHandler, setJoinAcceptHandler } from '../lib/relaySync'
+import { buildJoinRequestEvent, buildJoinAcceptEvent } from '../lib/eventBuilder'
 import { ContactListManager, type Contact } from '../lib/contactList'
 import { MergeQueue, type SyncSession } from '../lib/syncMerge'
 import { TrustRevocationStore, type TrustRevocation } from '../lib/trustRevocation'
@@ -96,6 +97,7 @@ interface AppContextValue {
   // Stage 4
   contacts: Contact[]
   addContact: (npub: string, relay: string, displayName: string) => void
+  sendJoinRequest: (targetNpub: string, targetRelay: string) => void
   removeContact: (npub: string) => void
   mergeSessions: SyncSession[]
   acceptMergeItem: (peerNpub: string, eventId: string) => void
@@ -159,13 +161,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [mediaCacheEntries, setMediaCacheEntries] = useState<MediaCacheEntry[]>([])
 
   // ── Contact helpers ────────────────────────────────────────────────────────
+  // connectToRelay declared first — addContact and addContactAndConnect depend on it.
+  const connectToRelay = useCallback((url: string, pool: InstanceType<typeof RelayPool>) => {
+    const existing = pool.getStatuses()
+    if (url in existing) return  // already added (may still be connecting)
+    const client = pool.add(url)
+    client.onStatusChange((status) => {
+      setRelayStatuses({ ...pool.getStatuses() })
+      if (status === 'connected') {
+        fetchOnConnect(client).catch(() => {})
+        startSync(client)
+      }
+    })
+    broadcastQueue.attachToRelay(client)
+    client.connect()
+    setRelayStatuses({ ...pool.getStatuses() })
+  }, [])
+
+  // Add a contact and connect to their relay so events can flow both ways
+  const addContactAndConnect = useCallback((npub: string, relay: string, pool: InstanceType<typeof RelayPool>) => {
+    contactMgrRef.current.add({ npub, relay, displayName: npub.slice(0, 16) + '…', trusted: true })
+    relayTableRef.current.addKnown(relay, npub)
+    setContacts([...contactMgrRef.current.getAll()])
+    setKnownRelays(relayTableRef.current.getRanked())
+    if (pool) connectToRelay(relay, pool)
+    if (session?.nsec) void storageSet('chronicle:contacts', contactMgrRef.current.encrypt(nsecToHex(session.nsec)))
+  }, [connectToRelay, session])
 
   const addContact = useCallback((npub: string, relay: string, displayName: string) => {
     contactMgrRef.current.add({ npub, relay, displayName, trusted: true })
     relayTableRef.current.addKnown(relay, npub)
     setContacts([...contactMgrRef.current.getAll()])
     setKnownRelays(relayTableRef.current.getRanked())
-  }, [])
+    if (poolRef.current) connectToRelay(relay, poolRef.current)
+    if (session?.nsec) void storageSet('chronicle:contacts', contactMgrRef.current.encrypt(nsecToHex(session.nsec)))
+  }, [connectToRelay, session])
 
   const removeContact = useCallback((npub: string) => {
     contactMgrRef.current.remove(npub)
@@ -224,12 +254,48 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ── Join request helpers ───────────────────────────────────────────────────
 
+  const sendJoinRequest = useCallback((targetNpub: string, targetRelay: string) => {
+    if (!session) return
+    // Build and sign the join request event
+    const event = buildJoinRequestEvent(
+      session.npub, session.nsec,
+      targetNpub, LOCAL_RELAY_URL,
+      session.displayName || session.npub.slice(0, 16) + '…',
+    )
+    // Connect to the target's relay and publish the request there
+    if (poolRef.current) {
+      connectToRelay(targetRelay, poolRef.current)
+      broadcastQueue.enqueue(event)
+      setTimeout(() => {
+        if (poolRef.current) broadcastQueue.drain(poolRef.current)
+      }, 1500) // small delay to let the connection establish
+    }
+    // Also add them locally so we can see them in the contacts list while waiting
+    addContact(targetNpub, targetRelay, targetNpub.slice(0, 16) + '…')
+  }, [session, addContact, connectToRelay])
+
   const acceptJoinRequest = useCallback((eventId: string) => {
     const req = joinQueueRef.current.get(eventId)
     joinQueueRef.current.accept(eventId)
-    if (req) addContact(req.requesterNpub, req.requesterRelay, req.displayName)
-    setJoinRequests([...joinQueueRef.current.getAll()])
-  }, [addContact])
+    if (req && session) {
+      // Add the requester as a contact and connect to their relay
+      addContact(req.requesterNpub, req.requesterRelay, req.displayName)
+      // Publish a JOIN_ACCEPT event to the requester's relay so they know
+      const acceptEvent = buildJoinAcceptEvent(
+        session.npub, session.nsec,
+        req.requesterNpub, req.eventId,
+        LOCAL_RELAY_URL,
+      )
+      // Publish to the requester's relay directly
+      if (poolRef.current) {
+        // Ensure we're connected to their relay, then publish
+        connectToRelay(req.requesterRelay, poolRef.current)
+        broadcastQueue.enqueue(acceptEvent)
+        broadcastQueue.drain(poolRef.current)
+      }
+    }
+    setJoinRequests([...joinQueueRef.current.getPending()])
+  }, [addContact, session, connectToRelay])
 
   const rejectJoinRequest = useCallback((eventId: string) => {
     joinQueueRef.current.reject(eventId)
@@ -313,8 +379,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const startRelay = useCallback(() => {
     if (poolRef.current) return
     const pool = new RelayPool()
-    pool.add(LOCAL_RELAY_URL)
     poolRef.current = pool
+
+    // Register join request/accept handlers so incoming events update the UI
+    setJoinRequestHandler((req) => {
+      joinQueueRef.current.add(req)
+      setJoinRequests([...joinQueueRef.current.getPending()])
+    })
+    setJoinAcceptHandler((accept) => {
+      // When we receive a JOIN_ACCEPT, add the acceptor as a contact and
+      // connect to their relay so we can start syncing tree data.
+      addContactAndConnect(accept.acceptorNpub, accept.acceptorRelay, pool)
+    })
 
     const client = pool.add(LOCAL_RELAY_URL)
     client.onStatusChange((status) => {
@@ -329,7 +405,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     broadcastQueue.attachToRelay(client)
     pool.connect()
     setRelayStatuses(pool.getStatuses())
-  }, [])
+  }, [connectToRelay])
 
   const stopRelay = useCallback(() => {
     syncUnsubRef.current?.()
@@ -356,6 +432,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
             if (mgr) {
               contactMgrRef.current = mgr
               setContacts([...mgr.getAll()])
+              // Reconnect to all known contact relays on session restore
+              const allContacts = mgr.getAll()
+              if (poolRef.current && allContacts.length > 0) {
+                for (const c of allContacts) {
+                  connectToRelay(c.relay, poolRef.current)
+                }
+              }
             }
           }
         } catch { /* non-fatal */ }
@@ -544,6 +627,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // Stage 4
         contacts,
         addContact,
+        sendJoinRequest,
         removeContact,
         mergeSessions,
         acceptMergeItem,

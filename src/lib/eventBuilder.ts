@@ -338,3 +338,56 @@ export function buildBlossomRefEvent(
   const unsigned = build(EventKind.BLOSSOM_REF, publisherNpub, blossomRefToTags(ref))
   return sign(unsigned, publisherNsec)
 }
+
+// ─── Join request (kind 30091) ────────────────────────────────────────────────
+
+import {
+  KIND_JOIN_REQUEST,
+  KIND_JOIN_ACCEPT,
+  buildJoinRequestTags,
+  buildJoinAcceptTags,
+} from './joinRequest'
+
+/**
+ * Build and sign a kind 30091 JOIN_REQUEST event.
+ * Published by the joiner to the inviter's relay.
+ */
+export function buildJoinRequestEvent(
+  requesterNpub: string,
+  requesterNsec: string,
+  targetNpub: string,
+  requesterRelay: string,
+  displayName: string,
+): ChronicleEvent {
+  const tags = buildJoinRequestTags(targetNpub, requesterRelay, displayName)
+  const unsigned = {
+    kind: KIND_JOIN_REQUEST,
+    pubkey: npubToHex(requesterNpub),
+    created_at: now(),
+    tags,
+    content: '',
+  }
+  return sign(unsigned as UnsignedEvent, requesterNsec)
+}
+
+/**
+ * Build and sign a kind 30092 JOIN_ACCEPT event.
+ * Published by the inviter back to the requester's relay.
+ */
+export function buildJoinAcceptEvent(
+  acceptorNpub: string,
+  acceptorNsec: string,
+  requesterNpub: string,
+  requestEventId: string,
+  acceptorRelay: string,
+): ChronicleEvent {
+  const tags = buildJoinAcceptTags(requesterNpub, requestEventId, acceptorRelay)
+  const unsigned = {
+    kind: KIND_JOIN_ACCEPT,
+    pubkey: npubToHex(acceptorNpub),
+    created_at: now(),
+    tags,
+    content: '',
+  }
+  return sign(unsigned as UnsignedEvent, acceptorNsec)
+}

@@ -45,8 +45,9 @@ function RelayDot() {
 function ConnectTab() {
   const { t } = useTranslation()
   const {
-    session, localRelayUrl, contacts, addContact, removeContact,
+    session, localRelayUrl, contacts, removeContact,
     joinRequests, acceptJoinRequest, rejectJoinRequest, reportBadActor,
+    sendJoinRequest,
   } = useApp()
 
   const [showInvite, setShowInvite] = useState(false)
@@ -94,7 +95,7 @@ function ConnectTab() {
         userNpub={session.npub}
         relayUrl={localRelayUrl}
         onIncomingInvite={(npub, relay) => {
-          addContact(npub, relay, npub.slice(0, 12) + '…')
+          sendJoinRequest(npub, relay)
           setShowInvite(false)
         }}
       />
