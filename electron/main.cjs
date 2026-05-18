@@ -1,15 +1,15 @@
 /**
- * Chronicle Electron Main Process — Stage 7
+ * Chronicle Electron Main Process
  *
- * Responsibilities:
- * - Create the BrowserWindow loading the Vite-built React app
- * - Spawn the embedded relay (relay/server.js) as a child process
- * - Manage relay lifecycle (start on app ready, kill on quit)
- * - Handle app auto-update via electron-updater (Stage 6)
- * - Construct SqliteStore and inject it as the graph + media cache backend (Stage 7)
+ * Multi-instance: launch with --instance=2 to run a fully independent second
+ * instance alongside the first. Each instance has its own userData directory,
+ * relay port, single-instance lock, session partition, and window title.
  *
- * The relay runs on ws://127.0.0.1:4869 by default.
- * The React app connects to this automatically via AppContext.
+ * ORDERING IS CRITICAL:
+ *   app.setPath('userData') and app.setName() must be called before
+ *   app.requestSingleInstanceLock() — which itself must be called before
+ *   app.whenReady(). storeDir is derived AFTER setPath so IPC handlers
+ *   read from the correct directory.
  */
 
 const { app, BrowserWindow, shell, ipcMain } = require('electron')
@@ -17,73 +17,62 @@ const path = require('path')
 const { spawn } = require('child_process')
 const fs = require('fs')
 
-// ─── Suppress EPIPE errors from broken stdout/stderr pipes ───────────────────
-// These occur when a second instance quits immediately via the single-instance
-// lock and Node tries to write to the now-closed pipe.
+// ─── Suppress EPIPE on broken pipes (second-instance fast-quit on Windows) ────
 process.stdout.on('error', (err) => { if (err.code !== 'EPIPE') throw err })
 process.stderr.on('error', (err) => { if (err.code !== 'EPIPE') throw err })
 process.on('uncaughtException', (err) => {
-  if (err.code === 'EPIPE') return  // ignore broken pipe
-  // For any other uncaught error, show it (default Electron behaviour)
+  if (err.code === 'EPIPE') return
   throw err
 })
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const RELAY_HOST = '127.0.0.1'
-const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
-
-// ─── Multi-instance support ───────────────────────────────────────────────────
-// Launch with --instance=2 (or --instance=3 etc.) to run a second independent
-// Chronicle instance on the same machine. Each instance gets:
-//   - Its own userData directory  (Chronicle, Chronicle-2, Chronicle-3 ...)
-//   - Its own relay port          (4869, 4870, 4871 ...)
-//   - Its own single-instance lock key (so two instances can coexist)
-//   - Its own window title and session partition
+// ─── Instance detection — must happen before anything touches userData ────────
 //
-// Usage (from a terminal after building):
-//   Windows:  .\Chronicle.exe --instance=2
-//   macOS:    open -n Chronicle.app --args --instance=2
-//   Linux:    ./Chronicle --instance=2
-//
-// Both instances connect to each other over ws://127.0.0.1:<port> — the same
-// WebSocket relay mechanism used for remote connections, so anything that works
-// locally will work when family members connect from different machines.
+// --instance=N gives each instance:
+//   userData dir : Chronicle  / Chronicle-2  / Chronicle-3  …
+//   relay port   : 4869       / 4870         / 4871         …
+//   app name     : Chronicle  / Chronicle-2  / Chronicle-3  …  (drives lock key)
+//   window title : Chronicle  / Chronicle (Instance 2)      …
+//   partition    : persist:chronicle / persist:chronicle-2   …
 
 const instanceArg = process.argv.find(a => a.startsWith('--instance='))
-const instanceNum = instanceArg ? parseInt(instanceArg.split('=')[1], 10) : 1
-const isSecondaryInstance = instanceNum > 1
+const instanceNum  = instanceArg ? Math.max(1, parseInt(instanceArg.split('=')[1], 10)) : 1
+const isSecondary  = instanceNum > 1
 
-const RELAY_PORT = 4869 + (instanceNum - 1)  // 4869, 4870, 4871 ...
+const RELAY_PORT   = 4869 + (instanceNum - 1)
+const RELAY_HOST   = '127.0.0.1'
+const isDev        = process.env.NODE_ENV === 'development' || !app.isPackaged
 
-// Override userData path for secondary instances so each has its own identity,
-// key material, and SQLite database. Primary instance keeps the default path.
-if (isSecondaryInstance) {
-  const defaultUserData = app.getPath('userData')
-  // e.g. C:\Users\Matt\AppData\Roaming\Chronicle  ->  ...\Chronicle-2
-  app.setPath('userData', `${defaultUserData}-${instanceNum}`)
+// Set app name FIRST — Electron uses this as the single-instance lock key.
+// Different name = different lock = both instances can run simultaneously.
+const APP_NAME = isSecondary ? `Chronicle-${instanceNum}` : 'Chronicle'
+app.setName(APP_NAME)
+
+// Override userData BEFORE the lock (and before app.ready).
+// This ensures every subsequent call to app.getPath('userData') returns the
+// right directory — including inside the IPC store handlers below.
+if (isSecondary) {
+  // Default userData is e.g. C:\Users\Matt\AppData\Roaming\Chronicle
+  // We want:                  C:\Users\Matt\AppData\Roaming\Chronicle-2
+  const base = app.getPath('userData')          // still 'Chronicle' at this point
+  const parent = path.dirname(base)
+  app.setPath('userData', path.join(parent, APP_NAME))
 }
 
-// ─── Single instance lock ─────────────────────────────────────────────────────
-// Each instance number gets its own lock key so they can coexist side-by-side.
-// Within the same instance number, the lock still prevents accidental duplicates.
+// ─── Single-instance lock ─────────────────────────────────────────────────────
+// Because app.setName() changed the app name, Electron uses a different lock
+// file for each instance — no options object needed.
 
-const lockKey = isSecondaryInstance ? { additionalData: `instance-${instanceNum}` } : {}
-const gotLock = app.requestSingleInstanceLock(lockKey)
+const gotLock = app.requestSingleInstanceLock()
 
 if (!gotLock) {
-  // Another instance is already running — quit immediately without creating any window
   app.quit()
 } else {
-  // We are the primary instance — set up second-instance handler and run normally
   app.on('second-instance', () => {
     if (global.mainWindow) {
       if (global.mainWindow.isMinimized()) global.mainWindow.restore()
       global.mainWindow.focus()
     }
   })
-
-  // ─── App lifecycle (only runs in the primary instance) ──────────────────────
 
   app.whenReady().then(() => {
     initSqliteStore()
@@ -101,93 +90,53 @@ if (!gotLock) {
     if (process.platform !== 'darwin') app.quit()
   })
 
-  app.on('before-quit', () => {
-    stopRelay()
-  })
-
-  app.on('will-quit', () => {
-    stopRelay()
-  })
+  app.on('before-quit', () => { stopRelay() })
+  app.on('will-quit',   () => { stopRelay() })
 }
 
 // ─── Auto-updater (production only) ──────────────────────────────────────────
-// electron-updater must be installed: npm install electron-updater
-// Configured via package.json build.publish field.
-// In dev mode we skip this to avoid spurious update checks.
+// Only run on the primary instance — we don't want two update dialogs.
 
-let autoUpdater = null
-let currentUpdateInfo = null  // { version } of available update, once found
+let autoUpdater      = null
+let currentUpdateInfo = null
 
 function setupAutoUpdater(win) {
-  if (isDev) return
+  if (isDev || isSecondary) return
 
   try {
     const { autoUpdater: au } = require('electron-updater')
     autoUpdater = au
 
-    autoUpdater.autoDownload = true
+    autoUpdater.autoDownload        = true
     autoUpdater.autoInstallOnAppQuit = true
 
     const sendStatus = (type, payload = {}) => {
-      if (win && !win.isDestroyed()) {
+      if (win && !win.isDestroyed())
         win.webContents.send('update-status', { type, ...payload })
-      }
     }
 
-    autoUpdater.on('checking-for-update', () => {
-      console.log('[updater] Checking…')
-      sendStatus('checking')
-    })
-    autoUpdater.on('update-available', (info) => {
-      console.log('[updater] Update available:', info.version)
-      currentUpdateInfo = info
-      sendStatus('available', { newVersion: info.version, currentVersion: app.getVersion() })
-    })
-    autoUpdater.on('update-not-available', () => {
-      console.log('[updater] Up to date.')
-      sendStatus('up-to-date', { currentVersion: app.getVersion() })
-    })
-    autoUpdater.on('download-progress', (progress) => {
-      sendStatus('downloading', { percent: Math.round(progress.percent) })
-    })
-    autoUpdater.on('update-downloaded', (info) => {
-      console.log('[updater] Downloaded:', info.version)
-      sendStatus('ready', { newVersion: info.version, currentVersion: app.getVersion() })
-    })
-    autoUpdater.on('error', (err) => {
-      console.error('[updater] Error:', err.message)
-      sendStatus('error', { message: err.message })
-    })
-
-    // No automatic check — user triggers from Settings
+    autoUpdater.on('checking-for-update',  ()     => { console.log('[updater] Checking…'); sendStatus('checking') })
+    autoUpdater.on('update-available',     (info) => { console.log('[updater] Available:', info.version); currentUpdateInfo = info; sendStatus('available', { newVersion: info.version, currentVersion: app.getVersion() }) })
+    autoUpdater.on('update-not-available', ()     => { console.log('[updater] Up to date.'); sendStatus('up-to-date', { currentVersion: app.getVersion() }) })
+    autoUpdater.on('download-progress',    (p)    => { sendStatus('downloading', { percent: Math.round(p.percent) }) })
+    autoUpdater.on('update-downloaded',    (info) => { console.log('[updater] Downloaded:', info.version); sendStatus('ready', { newVersion: info.version, currentVersion: app.getVersion() }) })
+    autoUpdater.on('error',                (err)  => { console.error('[updater] Error:', err.message); sendStatus('error', { message: err.message }) })
   } catch (e) {
     console.warn('[updater] electron-updater not available:', e.message)
   }
 }
 
-// IPC: get current app version
-ipcMain.handle('get-version', () => app.getVersion())
-
-// IPC: manually trigger an update check from the renderer (Settings screen)
+ipcMain.handle('get-version',      ()  => app.getVersion())
 ipcMain.handle('check-for-update', async () => {
-  if (!autoUpdater) return { error: 'Updater not available (development mode)' }
-  try {
-    await autoUpdater.checkForUpdates()
-    return { ok: true }
-  } catch (e) {
-    return { error: e.message }
-  }
+  if (!autoUpdater) return { error: 'Updater not available' }
+  try { await autoUpdater.checkForUpdates(); return { ok: true } }
+  catch (e) { return { error: e.message } }
 })
+ipcMain.on('install-update', () => { if (autoUpdater) autoUpdater.quitAndInstall(false, true) })
 
-// IPC: renderer can ask to install the downloaded update
-ipcMain.on('install-update', () => {
-  if (autoUpdater) {
-    autoUpdater.quitAndInstall(false, true)
-  }
-})
-
-// ─── Persistent key-value store (replaces localStorage for reliability) ───────
-// Writes JSON files to userData so data survives app restarts and file:// quirks.
+// ─── Persistent key-value store ───────────────────────────────────────────────
+// Derived AFTER setPath so it points at the correct instance directory.
+// DO NOT move this above the setPath call.
 
 const storeDir = app.getPath('userData')
 
@@ -204,6 +153,7 @@ ipcMain.handle('store-get', (_event, key) => {
 
 ipcMain.handle('store-set', (_event, key, value) => {
   try {
+    fs.mkdirSync(storeDir, { recursive: true })
     const filePath = path.join(storeDir, `${key}.json`)
     fs.writeFileSync(filePath, value, 'utf8')
     return true
@@ -214,30 +164,19 @@ ipcMain.handle('store-set', (_event, key, value) => {
 })
 
 // ─── SQLite store (Stage 7) ───────────────────────────────────────────────────
-// SqliteStore requires native better-sqlite3; only loaded inside Electron.
-// The graph backend and media cache backend are injected here so all
-// modules use SQLite persistence rather than in-memory stores.
 
 let sqliteStore = null
 
 function initSqliteStore() {
   try {
-    // These paths are relative to the built app — adjust for dev vs prod.
     const storePath = isDev
       ? path.join(__dirname, '..', 'src', 'lib', 'sqliteStore.js')
       : path.join(__dirname, '..', 'dist', 'sqliteStore.js')
 
-    // Try loading the compiled JS; fall back gracefully if unavailable
-    // (e.g. when running from source with ts-node not available).
     let SqliteStore
     try {
-      // In Electron, the renderer bundle is not available in main — use
-      // a direct require of the TS-compiled output if present, otherwise
-      // skip SQLite and use in-memory stores (dev mode without pre-build).
       SqliteStore = require(storePath).SqliteStore
     } catch (_e) {
-      // Compiled output not present — use dynamic require of source via
-      // ts-node if available (dev only), otherwise skip.
       console.warn('[main] SqliteStore compiled output not found; using in-memory stores')
       return
     }
@@ -246,7 +185,6 @@ function initSqliteStore() {
     sqliteStore = new SqliteStore(dbPath)
     console.log('[main] SqliteStore initialised at', dbPath)
 
-    // Inject into graph module
     try {
       const graphPath = isDev
         ? path.join(__dirname, '..', 'src', 'lib', 'graph.js')
@@ -258,7 +196,6 @@ function initSqliteStore() {
       console.warn('[main] Could not inject graph backend:', e.message)
     }
 
-    // Inject into media cache
     try {
       const blossomPath = isDev
         ? path.join(__dirname, '..', 'src', 'lib', 'blossom.js')
@@ -274,7 +211,7 @@ function initSqliteStore() {
   }
 }
 
-
+// ─── Embedded relay ───────────────────────────────────────────────────────────
 
 let relayProcess = null
 
@@ -291,39 +228,24 @@ function startRelay() {
   relayProcess = spawn(process.execPath.replace('Electron', 'node') || 'node', [relayScript], {
     env: {
       ...process.env,
-      PORT: String(RELAY_PORT),
-      HOST: RELAY_HOST,
-      DB_PATH: path.join(app.getPath('userData'), 'chronicle.db'),
+      PORT:          String(RELAY_PORT),
+      HOST:          RELAY_HOST,
+      DB_PATH:       path.join(app.getPath('userData'), 'chronicle.db'),
       ALLOWLIST_PATH: path.join(app.getPath('userData'), 'allowlist.json'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
 
-  relayProcess.stdout.on('data', (data) => {
-    console.log('[relay]', data.toString().trim())
-  })
+  relayProcess.stdout.on('data', d => console.log('[relay]', d.toString().trim()))
+  relayProcess.stderr.on('data', d => console.error('[relay]', d.toString().trim()))
+  relayProcess.on('exit',  (code, sig) => { console.log(`[relay] exited code=${code} sig=${sig}`); relayProcess = null })
+  relayProcess.on('error', err => console.error('[relay] failed to start:', err.message))
 
-  relayProcess.stderr.on('data', (data) => {
-    console.error('[relay]', data.toString().trim())
-  })
-
-  relayProcess.on('exit', (code, signal) => {
-    console.log(`[relay] exited — code=${code} signal=${signal}`)
-    relayProcess = null
-  })
-
-  relayProcess.on('error', (err) => {
-    console.error('[relay] failed to start:', err.message)
-  })
-
-  console.log('[main] Relay started, PID:', relayProcess.pid)
+  console.log(`[main] Relay started on port ${RELAY_PORT}, PID:`, relayProcess.pid)
 }
 
 function stopRelay() {
-  if (relayProcess) {
-    relayProcess.kill('SIGTERM')
-    relayProcess = null
-  }
+  if (relayProcess) { relayProcess.kill('SIGTERM'); relayProcess = null }
 }
 
 // ─── Browser window ───────────────────────────────────────────────────────────
@@ -331,10 +253,8 @@ function stopRelay() {
 let mainWindow = null
 
 function createWindow() {
-  const windowTitle = isSecondaryInstance ? `Chronicle (Instance ${instanceNum})` : 'Chronicle'
-  const sessionPartition = isSecondaryInstance
-    ? `persist:chronicle-${instanceNum}`
-    : 'persist:chronicle'
+  const windowTitle    = isSecondary ? `Chronicle (Instance ${instanceNum})` : 'Chronicle'
+  const sessionPartition = isSecondary ? `persist:chronicle-${instanceNum}` : 'persist:chronicle'
 
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -364,17 +284,11 @@ function createWindow() {
   }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http')) {
-      shell.openExternal(url)
-      return { action: 'deny' }
-    }
+    if (url.startsWith('http')) { shell.openExternal(url); return { action: 'deny' } }
     return { action: 'allow' }
   })
 
-  mainWindow.on('closed', () => {
-    mainWindow = null
-  })
+  mainWindow.on('closed', () => { mainWindow = null })
 
   return mainWindow
 }
-

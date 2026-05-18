@@ -1047,3 +1047,47 @@ The name field is now shown in edit mode. For ancestors and local entries it's f
 **Files changed:** `FamilyTreeView.tsx`, `ProfileCard.tsx`, `AddPersonModal.tsx`, `App.tsx`
 
 **Tests:** 637/637 passing. TypeScript clean. Build clean.
+
+### Multi-instance support — run two Chronicle instances side-by-side (v1.0.56)
+
+**Purpose:** Test the full connection and sync flow on a single machine before involving real family members. Both instances use the same WebSocket relay mechanism as remote connections, so behaviour is identical.
+
+**How it works:**
+
+Each instance launched with `--instance=N` gets:
+- Its own `userData` directory (`Chronicle` for instance 1, `Chronicle-2` for instance 2, etc.) — separate identity, key material, and SQLite database
+- Its own relay port (4869 for instance 1, 4870 for instance 2, 4871 for instance 3, ...)
+- Its own single-instance lock key — both windows coexist simultaneously
+- Its own session partition — separate browser storage
+- Window title shows `Chronicle (Instance 2)` for secondary instances so you can tell them apart
+
+**Launch commands (after installing the built app):**
+
+Windows (from the install directory or via a shortcut):
+```
+"Chronicle.exe" --instance=2
+```
+
+macOS:
+```
+open -n /Applications/Chronicle.app --args --instance=2
+```
+
+Linux:
+```
+./Chronicle --instance=2
+```
+
+**To test a connection:**
+1. Launch instance 1 normally (double-click). Create an identity (Alice).
+2. Launch instance 2 with `--instance=2`. Create a second identity (Bob).
+3. In Alice's instance, go to Connect → generate an invite code.
+4. In Bob's instance, go to Connect → paste the invite code.
+5. Alice's relay is at `ws://127.0.0.1:4869`, Bob's at `ws://127.0.0.1:4870` — both accessible over localhost.
+
+**Files changed:**
+- `electron/main.cjs`: parses `--instance=N`, sets userData path, relay port, lock key, window title, and session partition per instance
+- `electron/preload.cjs`: exposes `instanceNum` and `relayPort` to the renderer via context bridge
+- `src/context/AppContext.tsx`: `LOCAL_RELAY_URL` now reads `relayPort` from the preload (falls back to 4869 in browser dev mode); allowlist HTTP call also uses the dynamic port
+
+**Tests:** 637/637 passing. TypeScript clean. Build clean.
