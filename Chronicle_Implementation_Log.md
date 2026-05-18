@@ -1020,3 +1020,30 @@ Solutions to consider for a future pass:
 - Special-case cross-family couples: use the couple's children-midpoint as their primary target, not the grandparents-midpoint.
 
 The current staggered-junctionY rendering masks the issue visually but doesn't fix the geometry.
+
+### Tree view UX overhaul — inline editing, no pubkeys (v1.0.54)
+
+**Changes made:**
+
+**1. "Edit information" now opens inline — no tab switch.**
+Previously clicking "Edit information" in the tree's action panel navigated to the People tab. Now it opens a `PersonProfileModal` directly over the tree, showing the full edit form. After saving, the modal closes and the tree redraws in place.
+
+**2. "View full profile" now opens a profile card modal — no tree root change.**
+Previously clicking "View full profile" changed the tree root to that person, breaking the layout. Now it opens `PersonProfileModal` in view mode, showing the full `ProfileCard` with all fact fields, relationships, and conflict history. The tree stays put.
+
+**3. "View tree from [name]'s perspective" replaces "Make this person the tree root" — contacts only.**
+The "make root" button is now only shown for connected contacts (people whose pubkey appears in the user's contact list). For ancestors and other local entries it's hidden — the People list is the right place to change perspective. The label is changed to "View tree from [name]'s perspective" to make the intent clear.
+
+**4. Pubkeys removed from all visible UI.**
+- Node display-name fallback: was `pubkey.slice(0, 12) + '…'`, now `'Unknown'`
+- Claims panel claimant: was raw pubkey truncated, now resolves to person's display name or `'Family member'`
+- Relationships section fallback: was truncated pubkey, now `'Unknown'`
+
+**5. Name editing in edit mode.**
+The name field is now shown in edit mode. For ancestors and local entries it's freely editable and saves to the `Person` record in the store. For connected contacts the field is disabled with a "Set by them" label — the contact's chosen name is authoritative.
+
+**New file:** `src/components/PersonProfileModal.tsx` — modal wrapper around `ProfileCard` and `AddPersonModal`. Handles view/edit mode toggle, save callbacks, and delete. Used from `FamilyTreeView`'s `ActionPanel`.
+
+**Files changed:** `FamilyTreeView.tsx`, `ProfileCard.tsx`, `AddPersonModal.tsx`, `App.tsx`
+
+**Tests:** 637/637 passing. TypeScript clean. Build clean.

@@ -61,31 +61,34 @@ export function PersonProfileModal({
   }
 
   return (
-    <div
-      className="modal-overlay"
-      onClick={onClose}
-      style={{ zIndex: 1100 }}
-    >
-      <div
-        className="modal-panel"
-        onClick={e => e.stopPropagation()}
-        style={{ maxWidth: 520, width: '95%', maxHeight: '90vh', overflowY: 'auto' }}
-      >
-        {editing ? (
-          // Edit mode — renders AddPersonModal inline inside the overlay
-          <AddPersonModal
-            mode="edit"
-            editPerson={person}
-            onSave={handleSaved}
-            onDelete={handleDeleted}
-            onCancel={() => {
-              if (startInEditMode) onClose()
-              else setEditing(false)
-            }}
-          />
-        ) : (
-          // View mode — full ProfileCard
-          <>
+    <>
+      {editing ? (
+        // Edit mode — AddPersonModal has its own modal-overlay, so render it
+        // outside our overlay entirely. Two nested overlays stack up and the
+        // outer one eats all clicks, producing the "grey screen, nothing works"
+        // bug. Rendering it as a sibling avoids that entirely.
+        <AddPersonModal
+          mode="edit"
+          editPerson={person}
+          onSave={handleSaved}
+          onDelete={handleDeleted}
+          onCancel={() => {
+            if (startInEditMode) onClose()
+            else setEditing(false)
+          }}
+        />
+      ) : (
+        <div
+          className="modal-overlay"
+          onClick={onClose}
+          style={{ zIndex: 1100 }}
+        >
+          <div
+            className="modal-panel"
+            onClick={e => e.stopPropagation()}
+            style={{ maxWidth: 520, width: '95%', maxHeight: '90vh', overflowY: 'auto' }}
+          >
+            {/* View mode — full ProfileCard */}
             <div className="modal-header">
               <h2 className="modal-title">{person.displayName}</h2>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -107,9 +110,9 @@ export function PersonProfileModal({
                 onAddInfo={() => setEditing(true)}
               />
             </div>
-          </>
-        )}
-      </div>
-    </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
