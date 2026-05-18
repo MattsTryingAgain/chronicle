@@ -161,7 +161,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [mediaCacheEntries, setMediaCacheEntries] = useState<MediaCacheEntry[]>([])
 
   // ── Contact helpers ────────────────────────────────────────────────────────
-  // connectToRelay declared first — addContact and addContactAndConnect depend on it.
+  // allowlistAdd first — startRelay's handlers reference it before it would
+  // otherwise be declared. connectToRelay second — addContact depends on it.
+  const allowlistAdd = useCallback(async (npubOrHex: string): Promise<void> => {
+    try {
+      await fetch(`http://127.0.0.1:${_relayPort}/allowlist/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pubkey: npubOrHex }),
+      })
+    } catch { /* non-fatal — relay may not be running */ }
+  }, [])
+
+  // connectToRelay declared before addContact — addContact depends on it.
   const connectToRelay = useCallback((url: string, pool: InstanceType<typeof RelayPool>) => {
     const existing = pool.getStatuses()
     if (url in existing) return  // already added (may still be connecting)
@@ -278,24 +290,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const req = joinQueueRef.current.get(eventId)
     joinQueueRef.current.accept(eventId)
     if (req && session) {
-      // Add the requester as a contact and connect to their relay
+      // Add the requester's pubkey to our relay allowlist so their future
+      // events are accepted (join request already got through as a special case)
+      void allowlistAdd(req.requesterNpub)
+      // Add them as a contact and connect to their relay
       addContact(req.requesterNpub, req.requesterRelay, req.displayName)
-      // Publish a JOIN_ACCEPT event to the requester's relay so they know
+      // Publish a JOIN_ACCEPT event to the requester's relay
       const acceptEvent = buildJoinAcceptEvent(
         session.npub, session.nsec,
         req.requesterNpub, req.eventId,
         LOCAL_RELAY_URL,
       )
-      // Publish to the requester's relay directly
       if (poolRef.current) {
-        // Ensure we're connected to their relay, then publish
         connectToRelay(req.requesterRelay, poolRef.current)
         broadcastQueue.enqueue(acceptEvent)
-        broadcastQueue.drain(poolRef.current)
+        setTimeout(() => {
+          if (poolRef.current) broadcastQueue.drain(poolRef.current)
+        }, 1500) // small delay to let the relay connection establish
       }
     }
     setJoinRequests([...joinQueueRef.current.getPending()])
-  }, [addContact, session, connectToRelay])
+  }, [addContact, allowlistAdd, session, connectToRelay])
 
   const rejectJoinRequest = useCallback((eventId: string) => {
     joinQueueRef.current.reject(eventId)
@@ -364,18 +379,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ── Relay lifecycle ────────────────────────────────────────────────────────
 
-  const allowlistAdd = useCallback(async (npubOrHex: string): Promise<void> => {
-    try {
-      await fetch(`http://127.0.0.1:${_relayPort}/allowlist/add`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pubkey: npubOrHex }),
-      })
-    } catch {
-      // Non-fatal — relay may not be running
-    }
-  }, [])
-
   const startRelay = useCallback(() => {
     if (poolRef.current) return
     const pool = new RelayPool()
@@ -387,8 +390,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setJoinRequests([...joinQueueRef.current.getPending()])
     })
     setJoinAcceptHandler((accept) => {
-      // When we receive a JOIN_ACCEPT, add the acceptor as a contact and
-      // connect to their relay so we can start syncing tree data.
+      // When we receive a JOIN_ACCEPT, add the acceptor to our allowlist
+      // so they can publish events to our relay, then add them as a contact.
+      void allowlistAdd(accept.acceptorNpub)
       addContactAndConnect(accept.acceptorNpub, accept.acceptorRelay, pool)
     })
 

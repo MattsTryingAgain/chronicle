@@ -274,8 +274,11 @@ function handleMessage(ws, socketId, raw) {
       return
     }
 
-    // Allowlist check
-    if (!allowlist.has(event.pubkey)) {
+    // Allowlist check — KIND_JOIN_REQUEST (30091) is exempt so unknown pubkeys
+    // can send a connection request before they have been trusted. All other
+    // event kinds require the sender to be on the allowlist.
+    const KIND_JOIN_REQUEST = 30091
+    if (event.kind !== KIND_JOIN_REQUEST && !allowlist.has(event.pubkey)) {
       send(ws, ['OK', event.id, false, 'blocked: pubkey not in allowlist'])
       return
     }
