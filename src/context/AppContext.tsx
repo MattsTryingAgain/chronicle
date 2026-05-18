@@ -417,8 +417,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ── Relay lifecycle ────────────────────────────────────────────────────────
 
+  const startRelayStarting = useRef(false)
   const startRelay = useCallback(async () => {
     if (poolRef.current) return
+    if (startRelayStarting.current) return  // prevent double-start during async await
+    startRelayStarting.current = true
 
     // Resolve the relay port from the main process before connecting.
     // This ensures instance 2 uses 4870, not 4869.
@@ -434,6 +437,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const pool = new RelayPool()
     poolRef.current = pool
+    startRelayStarting.current = false
 
     // Register join request/accept handlers so incoming events update the UI
     setJoinRequestHandler((req) => {

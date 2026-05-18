@@ -22,9 +22,27 @@
 
 'use strict'
 
-const WebSocket = require('ws')
 const path = require('path')
 const fs = require('fs')
+
+// Resolve ws from relay/node_modules first, then fall back to the app's root
+// node_modules (which is always present in the packaged build). This avoids
+// needing relay/node_modules to exist in the shipped installer.
+let WebSocket
+try {
+  WebSocket = require('ws')
+} catch {
+  // Try the app root node_modules (one or two levels up from resources/relay/)
+  const candidates = [
+    path.join(__dirname, '..', 'node_modules', 'ws'),
+    path.join(__dirname, '..', '..', 'node_modules', 'ws'),
+    path.join(__dirname, '..', '..', '..', 'node_modules', 'ws'),
+  ]
+  for (const c of candidates) {
+    if (fs.existsSync(c)) { WebSocket = require(c); break }
+  }
+  if (!WebSocket) throw new Error('ws module not found — install with: cd relay && npm install')
+}
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -99,10 +117,46 @@ const allowlist = {
 let db
 
 function initDb() {
-  const Database = require('better-sqlite3')
-  db = new Database(DB_PATH)
-  db.pragma('journal_mode = WAL')
-  db.pragma('synchronous = NORMAL')
+  // better-sqlite3 requires native compilation. In a freshly installed app
+  // the relay/node_modules may not include the compiled binary. Fall back to
+  // an in-memory Map store so the relay still functions — events won't
+  // survive restarts but connections and handshakes will work normally.
+  try {
+    const Database = require('better-sqlite3')
+    db = new Database(DB_PATH)
+    db.pragma('journal_mode = WAL')
+    db.pragma('synchronous = NORMAL')
+  } catch (e) {
+    console.warn('[relay] better-sqlite3 not available, using in-memory store:', e.message)
+    db = null
+  }
+
+  if (!db) {
+    // Minimal in-memory shim with the same API surface used below
+    const memEvents = new Map()
+    db = {
+      prepare: (sql) => ({
+        run: (params) => {
+          if (sql.includes('INSERT OR IGNORE')) {
+            if (!memEvents.has(params.id)) memEvents.set(params.id, params)
+          }
+          return { changes: 1 }
+        },
+        all: (params) => {
+          let rows = Array.from(memEvents.values())
+          if (params && params.kind !== undefined) rows = rows.filter(r => r.kind === params.kind)
+          return rows
+        },
+      }),
+      exec: () => {},
+      pragma: () => {},
+      close: () => {},
+      _memEvents: memEvents,
+      _isInMemory: true,
+    }
+    console.log('[relay] In-memory event store active')
+    return
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS events (

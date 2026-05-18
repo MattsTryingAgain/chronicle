@@ -42,6 +42,9 @@ jobs:
       - name: Build Vite app
         run: node_modules/.bin/vite build
 
+      - name: Install relay dependencies
+        run: cd relay && npm install --ignore-scripts
+
       - name: Build Windows installer
         run: npx electron-builder --win --publish never
 
@@ -88,6 +91,9 @@ jobs:
       - name: Build Vite app
         run: node_modules/.bin/vite build
 
+      - name: Install relay dependencies
+        run: cd relay && npm install --ignore-scripts
+
       - name: Build Mac installer
         run: npx electron-builder --mac --publish never
 
@@ -133,6 +139,9 @@ jobs:
 
       - name: Build Vite app
         run: node_modules/.bin/vite build
+
+      - name: Install relay dependencies
+        run: cd relay && npm install --ignore-scripts
 
       - name: Build Linux installer
         run: npx electron-builder --linux --publish never

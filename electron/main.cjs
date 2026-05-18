@@ -232,7 +232,24 @@ function startRelay() {
     return
   }
 
-  relayProcess = spawn(process.execPath.replace('Electron', 'node') || 'node', [relayScript], {
+  // Find the Node.js executable to run the relay script.
+  // electron-builder packages a copy of node.exe in the win-unpacked directory
+  // alongside the app executable on Windows. On Mac/Linux it's 'node' next to
+  // the binary. We search a few candidate locations then fall back to the
+  // system node on PATH.
+  let nodeBin = 'node'
+  const execDir = path.dirname(process.execPath)
+  const nodeCandidates = [
+    path.join(execDir, 'node.exe'),        // Windows (win-unpacked)
+    path.join(execDir, 'node'),            // Linux/Mac
+    path.join(execDir, 'resources', 'node.exe'),
+    path.join(execDir, 'resources', 'node'),
+  ]
+  for (const c of nodeCandidates) {
+    if (fs.existsSync(c)) { nodeBin = c; break }
+  }
+
+  relayProcess = spawn(nodeBin, [relayScript], {
     env: {
       ...process.env,
       PORT:           String(RELAY_PORT),
