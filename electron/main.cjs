@@ -6,10 +6,14 @@
  * relay port, single-instance lock, session partition, and window title.
  *
  * ORDERING IS CRITICAL:
- *   app.setPath('userData') and app.setName() must be called before
- *   app.requestSingleInstanceLock() — which itself must be called before
- *   app.whenReady(). storeDir is derived AFTER setPath so IPC handlers
- *   read from the correct directory.
+ *   app.setPath('userData') must be called before app.requestSingleInstanceLock()
+ *   which must be called before app.whenReady().
+ *   storeDir is derived AFTER setPath so IPC handlers read/write the right directory.
+ *
+ *   app.setName() is intentionally NOT called on the primary instance — doing so
+ *   can silently change the userData path if the packaged app name differs from
+ *   the string passed. Only secondary instances use setName, and only to get a
+ *   different lock key (Electron derives the lock from the app name on Windows).
  */
 
 const { app, BrowserWindow, shell, ipcMain } = require('electron')
@@ -25,42 +29,40 @@ process.on('uncaughtException', (err) => {
   throw err
 })
 
-// ─── Instance detection — must happen before anything touches userData ────────
-//
-// --instance=N gives each instance:
-//   userData dir : Chronicle  / Chronicle-2  / Chronicle-3  …
-//   relay port   : 4869       / 4870         / 4871         …
-//   app name     : Chronicle  / Chronicle-2  / Chronicle-3  …  (drives lock key)
-//   window title : Chronicle  / Chronicle (Instance 2)      …
-//   partition    : persist:chronicle / persist:chronicle-2   …
+// ─── Instance detection ───────────────────────────────────────────────────────
+// Must happen before anything that touches userData or the single-instance lock.
 
 const instanceArg = process.argv.find(a => a.startsWith('--instance='))
 const instanceNum  = instanceArg ? Math.max(1, parseInt(instanceArg.split('=')[1], 10)) : 1
 const isSecondary  = instanceNum > 1
 
-const RELAY_PORT   = 4869 + (instanceNum - 1)
-const RELAY_HOST   = '127.0.0.1'
-const isDev        = process.env.NODE_ENV === 'development' || !app.isPackaged
+const RELAY_PORT = 4869 + (instanceNum - 1)   // 4869, 4870, 4871 ...
+const RELAY_HOST = '127.0.0.1'
+const isDev      = process.env.NODE_ENV === 'development' || !app.isPackaged
 
-// Set app name FIRST — Electron uses this as the single-instance lock key.
-// Different name = different lock = both instances can run simultaneously.
-const APP_NAME = isSecondary ? `Chronicle-${instanceNum}` : 'Chronicle'
-app.setName(APP_NAME)
-
-// Override userData BEFORE the lock (and before app.ready).
-// This ensures every subsequent call to app.getPath('userData') returns the
-// right directory — including inside the IPC store handlers below.
+// Secondary instances need a separate userData directory so each has its own
+// identity, key material, and SQLite database.
+// Primary instance: leave userData completely untouched — never call setPath or
+// setName on it, so there is zero risk of disturbing existing data.
 if (isSecondary) {
-  // Default userData is e.g. C:\Users\Matt\AppData\Roaming\Chronicle
-  // We want:                  C:\Users\Matt\AppData\Roaming\Chronicle-2
-  const base = app.getPath('userData')          // still 'Chronicle' at this point
-  const parent = path.dirname(base)
-  app.setPath('userData', path.join(parent, APP_NAME))
+  // app.getPath('userData') at this point returns the default path for the
+  // primary instance (e.g. C:\Users\Matt\AppData\Roaming\Chronicle).
+  // We append -2, -3 etc. to get a sibling directory.
+  const primaryUserData = app.getPath('userData')
+  const secondaryUserData = `${primaryUserData}-${instanceNum}`
+  app.setPath('userData', secondaryUserData)
+
+  // Change the app name so Electron uses a different single-instance lock key.
+  // We do this ONLY for secondary instances. On the primary instance we leave
+  // the name alone — the packaged executable already has the correct name baked
+  // in, and calling setName can silently shift the userData path on some builds.
+  app.setName(`Chronicle-${instanceNum}`)
 }
 
 // ─── Single-instance lock ─────────────────────────────────────────────────────
-// Because app.setName() changed the app name, Electron uses a different lock
-// file for each instance — no options object needed.
+// Primary instance:   lock key = default (app's packaged name)
+// Secondary instance: lock key = "Chronicle-2" (set above via setName)
+// Both can coexist because they hold different lock keys.
 
 const gotLock = app.requestSingleInstanceLock()
 
@@ -94,10 +96,9 @@ if (!gotLock) {
   app.on('will-quit',   () => { stopRelay() })
 }
 
-// ─── Auto-updater (production only) ──────────────────────────────────────────
-// Only run on the primary instance — we don't want two update dialogs.
+// ─── Auto-updater (production, primary instance only) ────────────────────────
 
-let autoUpdater      = null
+let autoUpdater       = null
 let currentUpdateInfo = null
 
 function setupAutoUpdater(win) {
@@ -107,7 +108,7 @@ function setupAutoUpdater(win) {
     const { autoUpdater: au } = require('electron-updater')
     autoUpdater = au
 
-    autoUpdater.autoDownload        = true
+    autoUpdater.autoDownload         = true
     autoUpdater.autoInstallOnAppQuit = true
 
     const sendStatus = (type, payload = {}) => {
@@ -126,17 +127,21 @@ function setupAutoUpdater(win) {
   }
 }
 
-ipcMain.handle('get-version',      ()  => app.getVersion())
+ipcMain.handle('get-version', () => app.getVersion())
+
 ipcMain.handle('check-for-update', async () => {
   if (!autoUpdater) return { error: 'Updater not available' }
   try { await autoUpdater.checkForUpdates(); return { ok: true } }
   catch (e) { return { error: e.message } }
 })
-ipcMain.on('install-update', () => { if (autoUpdater) autoUpdater.quitAndInstall(false, true) })
+
+ipcMain.on('install-update', () => {
+  if (autoUpdater) autoUpdater.quitAndInstall(false, true)
+})
 
 // ─── Persistent key-value store ───────────────────────────────────────────────
-// Derived AFTER setPath so it points at the correct instance directory.
-// DO NOT move this above the setPath call.
+// storeDir is evaluated HERE — after setPath — so it resolves to the correct
+// instance directory. Do not hoist this above the setPath call.
 
 const storeDir = app.getPath('userData')
 
@@ -228,9 +233,9 @@ function startRelay() {
   relayProcess = spawn(process.execPath.replace('Electron', 'node') || 'node', [relayScript], {
     env: {
       ...process.env,
-      PORT:          String(RELAY_PORT),
-      HOST:          RELAY_HOST,
-      DB_PATH:       path.join(app.getPath('userData'), 'chronicle.db'),
+      PORT:           String(RELAY_PORT),
+      HOST:           RELAY_HOST,
+      DB_PATH:        path.join(app.getPath('userData'), 'chronicle.db'),
       ALLOWLIST_PATH: path.join(app.getPath('userData'), 'allowlist.json'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -253,7 +258,7 @@ function stopRelay() {
 let mainWindow = null
 
 function createWindow() {
-  const windowTitle    = isSecondary ? `Chronicle (Instance ${instanceNum})` : 'Chronicle'
+  const windowTitle      = isSecondary ? `Chronicle (Instance ${instanceNum})` : 'Chronicle'
   const sessionPartition = isSecondary ? `persist:chronicle-${instanceNum}` : 'persist:chronicle'
 
   mainWindow = new BrowserWindow({
