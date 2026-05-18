@@ -127,7 +127,9 @@ function setupAutoUpdater(win) {
   }
 }
 
-ipcMain.handle('get-version', () => app.getVersion())
+ipcMain.handle('get-version',   () => app.getVersion())
+ipcMain.handle('get-relay-port', () => RELAY_PORT)
+ipcMain.handle('get-instance',   () => instanceNum)
 
 ipcMain.handle('check-for-update', async () => {
   if (!autoUpdater) return { error: 'Updater not available' }

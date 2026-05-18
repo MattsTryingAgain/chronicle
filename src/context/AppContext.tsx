@@ -53,12 +53,26 @@ export interface BroadcastSettings {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 // Relay port is 4869 for the primary instance, 4870 for --instance=2, etc.
-// In Electron the preload exposes the correct port; in browser dev mode use 4869.
-const _relayPort: number =
-  typeof window !== 'undefined' && (window as any).chronicleElectron?.relayPort
-    ? (window as any).chronicleElectron.relayPort
-    : 4869
-export const LOCAL_RELAY_URL = `ws://127.0.0.1:${_relayPort}`
+// In Electron the preload exposes a relayPort() function (async IPC call) so
+// the main process can provide the correct port — process.argv is not available
+// in sandboxed renderer processes, so we can't read the --instance flag directly.
+// We resolve it once at module load and fall back to 4869 in browser/dev mode.
+let _relayPort = 4869
+export let LOCAL_RELAY_URL = `ws://127.0.0.1:${_relayPort}`
+
+// Kick off the async resolution immediately — by the time the user reaches
+// the main screen (after onboarding/unlock) the port will be resolved.
+if (typeof window !== 'undefined' && (window as any).chronicleElectron?.relayPort) {
+  ;(async () => {
+    try {
+      const port = await (window as any).chronicleElectron.relayPort()
+      if (typeof port === 'number' && port > 0) {
+        _relayPort = port
+        LOCAL_RELAY_URL = `ws://127.0.0.1:${_relayPort}`
+      }
+    } catch { /* non-fatal */ }
+  })()
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -379,8 +393,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ── Relay lifecycle ────────────────────────────────────────────────────────
 
-  const startRelay = useCallback(() => {
+  const startRelay = useCallback(async () => {
     if (poolRef.current) return
+
+    // Resolve the relay port from the main process before connecting.
+    // This ensures instance 2 uses 4870, not 4869.
+    if (typeof window !== 'undefined' && (window as any).chronicleElectron?.relayPort) {
+      try {
+        const port = await (window as any).chronicleElectron.relayPort()
+        if (typeof port === 'number' && port > 0) {
+          _relayPort = port
+          LOCAL_RELAY_URL = `ws://127.0.0.1:${_relayPort}`
+        }
+      } catch { /* non-fatal */ }
+    }
+
     const pool = new RelayPool()
     poolRef.current = pool
 
