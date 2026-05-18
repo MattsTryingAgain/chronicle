@@ -91,7 +91,7 @@ function ConnectTab() {
       <InviteModal
         show={showInvite}
         onClose={() => setShowInvite(false)}
-        userHexPubkey={session.npub}
+        userNpub={session.npub}
         relayUrl={localRelayUrl}
         onIncomingInvite={(npub, relay) => {
           addContact(npub, relay, npub.slice(0, 12) + '…')

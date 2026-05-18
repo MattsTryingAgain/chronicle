@@ -5,8 +5,8 @@ import { generateInviteCode, parseInviteCode } from '../lib/invite.js'
 interface Props {
   show: boolean
   onClose: () => void
-  /** The local user's hex pubkey */
-  userHexPubkey: string
+  /** The local user's npub (or hex pubkey — both accepted) */
+  userNpub: string
   /** The local relay URL */
   relayUrl: string
   /** Called when an incoming invite code is validated — the caller handles the handshake */
@@ -15,7 +15,7 @@ interface Props {
 
 type Tab = 'generate' | 'join'
 
-export function InviteModal({ show, onClose, userHexPubkey, relayUrl, onIncomingInvite }: Props) {
+export function InviteModal({ show, onClose, userNpub, relayUrl, onIncomingInvite }: Props) {
   const { t } = useTranslation()
   const [tab, setTab] = useState<Tab>('generate')
   const [copied, setCopied] = useState(false)
@@ -25,7 +25,7 @@ export function InviteModal({ show, onClose, userHexPubkey, relayUrl, onIncoming
 
   if (!show) return null
 
-  const inviteCode = generateInviteCode(userHexPubkey, relayUrl)
+  const inviteCode = generateInviteCode(userNpub, relayUrl)
 
   function handleCopy() {
     navigator.clipboard.writeText(inviteCode).then(() => {

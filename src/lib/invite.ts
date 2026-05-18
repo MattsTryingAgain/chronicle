@@ -26,8 +26,9 @@ const INVITE_PREFIX = 'chronicle:'
 /**
  * Generate an invite code string from a hex pubkey and relay URL.
  */
-export function generateInviteCode(hexPubkey: string, relayUrl: string): string {
-  const npub = hexToNpub(hexPubkey)
+export function generateInviteCode(hexOrNpub: string, relayUrl: string): string {
+  // Accept either a hex pubkey or an already-encoded npub1... string
+  const npub = hexOrNpub.startsWith('npub1') ? hexOrNpub : hexToNpub(hexOrNpub)
   const payload: InvitePayload = { npub, relay: relayUrl, v: 1 }
   const json = JSON.stringify(payload)
   // base64url encode
