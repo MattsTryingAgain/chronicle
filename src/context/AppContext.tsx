@@ -288,17 +288,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
       targetNpub, LOCAL_RELAY_URL,
       session.displayName || session.npub.slice(0, 16) + '…',
     )
-    // Connect to the target's relay and publish the request there
+    // Publish the join request directly to the target relay — NOT via the
+    // broadcast queue, which publishes to all relays and would drain to our
+    // own local relay first. We need it to go specifically to targetRelay.
     if (poolRef.current) {
-      connectToRelay(targetRelay, poolRef.current)
-      broadcastQueue.enqueue(event)
-      setTimeout(() => {
-        if (poolRef.current) broadcastQueue.drain(poolRef.current)
-      }, 1500) // small delay to let the connection establish
+      const pool = poolRef.current
+      // pool.add() returns the existing client if already connected
+      const client = pool.add(targetRelay)
+      const publishWhenReady = () => {
+        client.publish(event)
+      }
+      if (client.getStatus() === 'connected') {
+        publishWhenReady()
+      } else {
+        // Wait for the connection then publish once
+        const unsub = client.onStatusChange((status) => {
+          if (status === 'connected') {
+            unsub()
+            publishWhenReady()
+          }
+        })
+        client.connect()
+      }
     }
-    // Also add them locally so we can see them in the contacts list while waiting
+    // Add them locally so the contact shows while the request is in flight
     addContact(targetNpub, targetRelay, targetNpub.slice(0, 16) + '…')
-  }, [session, addContact, connectToRelay])
+  }, [session, addContact])
 
   const acceptJoinRequest = useCallback((eventId: string) => {
     const req = joinQueueRef.current.get(eventId)
@@ -316,11 +331,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         LOCAL_RELAY_URL,
       )
       if (poolRef.current) {
-        connectToRelay(req.requesterRelay, poolRef.current)
-        broadcastQueue.enqueue(acceptEvent)
-        setTimeout(() => {
-          if (poolRef.current) broadcastQueue.drain(poolRef.current)
-        }, 1500) // small delay to let the relay connection establish
+        const pool = poolRef.current
+        const client = pool.add(req.requesterRelay)
+        const publishAccept = () => { client.publish(acceptEvent) }
+        if (client.getStatus() === 'connected') {
+          publishAccept()
+        } else {
+          const unsub = client.onStatusChange((status) => {
+            if (status === 'connected') { unsub(); publishAccept() }
+          })
+          client.connect()
+        }
       }
     }
     setJoinRequests([...joinQueueRef.current.getPending()])
