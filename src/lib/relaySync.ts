@@ -144,8 +144,13 @@ export function fetchOnConnect(client: RelayClient): Promise<SyncResult> {
  * Returns true if the event was stored (false if it was a duplicate).
  */
 export function ingestEvent(event: ChronicleEvent): boolean {
-  // Deduplicate — skip if already stored
-  if (store.getRawEvent(event.id)) return false
+  // JOIN_REQUEST and JOIN_ACCEPT are never deduplicated — the callback must
+  // fire every time they arrive so the UI can react even after a restart.
+  const isHandshake = event.kind === EventKind.JOIN_REQUEST || event.kind === EventKind.JOIN_ACCEPT
+  if (!isHandshake) {
+    // Deduplicate all other events — skip if already stored
+    if (store.getRawEvent(event.id)) return false
+  }
 
   store.addRawEvent(event)
 
@@ -428,5 +433,22 @@ function npubToHex(npub: string): string | null {
     return bytes.map((b) => b.toString(16).padStart(2, '0')).join('')
   } catch {
     return null
+  }
+}
+
+/**
+ * Scan raw event store for any JOIN_REQUEST events that haven't been processed
+ * yet and fire the handler for each. Call this after registering the handler
+ * on session start so requests that arrived before the handler was set are
+ * not missed.
+ */
+export function replayPendingJoinRequests(): void {
+  if (!onJoinRequestReceived) return
+  const all = store.getAllRawEvents()
+  for (const event of all) {
+    if (event.kind === EventKind.JOIN_REQUEST) {
+      const req = parseJoinRequest(event)
+      if (req) onJoinRequestReceived(req)
+    }
   }
 }

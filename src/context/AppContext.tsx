@@ -26,7 +26,7 @@ import { generateUserKeyMaterial, importKeyMaterial, nsecToHex } from '../lib/ke
 import { encryptWithPassword, decryptWithPassword } from '../lib/storage'
 import { RelayPool, type RelayStatus } from '../lib/relay'
 import { broadcastQueue } from '../lib/queue'
-import { startSync, fetchOnConnect, setJoinRequestHandler, setJoinAcceptHandler } from '../lib/relaySync'
+import { startSync, fetchOnConnect, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests } from '../lib/relaySync'
 import { buildJoinRequestEvent, buildJoinAcceptEvent } from '../lib/eventBuilder'
 import { ContactListManager, type Contact } from '../lib/contactList'
 import { MergeQueue, type SyncSession } from '../lib/syncMerge'
@@ -220,8 +220,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setContacts([...contactMgrRef.current.getAll()])
     setKnownRelays(relayTableRef.current.getRanked())
     if (poolRef.current) connectToRelay(relay, poolRef.current)
+    // Always allowlist a contact — covers the mutual-invite case where the
+    // formal accept flow was bypassed (both sides generated invites)
+    void allowlistAdd(npub)
     if (session?.nsec) void storageSet('chronicle:contacts', contactMgrRef.current.encrypt(nsecToHex(session.nsec)))
-  }, [connectToRelay, session])
+  }, [connectToRelay, session, allowlistAdd])
 
   const removeContact = useCallback((npub: string) => {
     contactMgrRef.current.remove(npub)
@@ -437,6 +440,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       joinQueueRef.current.add(req)
       setJoinRequests([...joinQueueRef.current.getPending()])
     })
+    // Replay any join requests that arrived before the handler was registered
+    // (e.g. events stored during a previous session or before app was ready)
+    replayPendingJoinRequests()
     setJoinAcceptHandler((accept) => {
       // When we receive a JOIN_ACCEPT, add the acceptor to our allowlist
       // so they can publish events to our relay, then add them as a contact.
