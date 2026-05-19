@@ -222,36 +222,52 @@ function initSqliteStore() {
 
 let relayProcess = null
 
+// Write relay diagnostics to a log file so we can inspect them without DevTools
+const relayLogPath = path.join(app.getPath('userData'), 'relay.log')
+function relayLog(msg) {
+  const line = `[${new Date().toISOString()}] ${msg}\n`
+  try { fs.appendFileSync(relayLogPath, line) } catch {}
+  console.log(msg)
+}
+
+// Expose relay log via IPC for the Settings page diagnostic display
+ipcMain.handle('get-relay-log', () => {
+  try {
+    if (fs.existsSync(relayLogPath)) {
+      return fs.readFileSync(relayLogPath, 'utf8').split('\n').slice(-50).join('\n')
+    }
+  } catch {}
+  return ''
+})
+
 function startRelay() {
+  // Clear old log on each start
+  try { fs.writeFileSync(relayLogPath, '') } catch {}
+
   const relayScript = isDev
     ? path.join(__dirname, '..', 'relay', 'server.js')
     : path.join(process.resourcesPath, 'relay', 'server.js')
 
+  relayLog(`[main] relay script path: ${relayScript}`)
+  relayLog(`[main] relay script exists: ${fs.existsSync(relayScript)}`)
+  relayLog(`[main] process.execPath: ${process.execPath}`)
+  relayLog(`[main] process.resourcesPath: ${process.resourcesPath || 'N/A'}`)
+
   if (!fs.existsSync(relayScript)) {
-    console.error('[main] Relay script not found at', relayScript)
+    relayLog(`[main] ERROR: Relay script not found at ${relayScript}`)
     return
   }
 
-  // Find the Node.js executable to run the relay script.
-  // electron-builder packages a copy of node.exe in the win-unpacked directory
-  // alongside the app executable on Windows. On Mac/Linux it's 'node' next to
-  // the binary. We search a few candidate locations then fall back to the
-  // system node on PATH.
-  let nodeBin = 'node'
-  const execDir = path.dirname(process.execPath)
-  const nodeCandidates = [
-    path.join(execDir, 'node.exe'),        // Windows (win-unpacked)
-    path.join(execDir, 'node'),            // Linux/Mac
-    path.join(execDir, 'resources', 'node.exe'),
-    path.join(execDir, 'resources', 'node'),
-  ]
-  for (const c of nodeCandidates) {
-    if (fs.existsSync(c)) { nodeBin = c; break }
-  }
+  // Find Node.js. In a packaged Electron app on Windows, there is no separate
+  // node.exe — Electron IS the Node runtime. We use Electron's own executable
+  // with ELECTRON_RUN_AS_NODE=1 env var, which makes it behave as plain Node.
+  const nodeBin = process.execPath
+  relayLog(`[main] Using node bin: ${nodeBin}`)
 
   relayProcess = spawn(nodeBin, [relayScript], {
     env: {
       ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',  // run Electron as plain Node for the relay
       PORT:           String(RELAY_PORT),
       HOST:           RELAY_HOST,
       DB_PATH:        path.join(app.getPath('userData'), 'chronicle.db'),
@@ -260,12 +276,15 @@ function startRelay() {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
 
-  relayProcess.stdout.on('data', d => console.log('[relay]', d.toString().trim()))
-  relayProcess.stderr.on('data', d => console.error('[relay]', d.toString().trim()))
-  relayProcess.on('exit',  (code, sig) => { console.log(`[relay] exited code=${code} sig=${sig}`); relayProcess = null })
-  relayProcess.on('error', err => console.error('[relay] failed to start:', err.message))
+  relayProcess.stdout.on('data', d => relayLog(`[relay] ${d.toString().trim()}`))
+  relayProcess.stderr.on('data', d => relayLog(`[relay:err] ${d.toString().trim()}`))
+  relayProcess.on('exit',  (code, sig) => {
+    relayLog(`[relay] exited code=${code} sig=${sig}`)
+    relayProcess = null
+  })
+  relayProcess.on('error', err => relayLog(`[relay] failed to start: ${err.message}`))
 
-  console.log(`[main] Relay started on port ${RELAY_PORT}, PID:`, relayProcess.pid)
+  relayLog(`[main] Relay spawned PID: ${relayProcess.pid} port: ${RELAY_PORT}`)
 }
 
 function stopRelay() {

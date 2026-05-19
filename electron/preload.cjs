@@ -33,6 +33,9 @@ contextBridge.exposeInMainWorld('chronicleElectron', {
   storeGet: (key) => ipcRenderer.invoke('store-get', key),
   storeSet: (key, value) => ipcRenderer.invoke('store-set', key, value),
 
+  /** Get last 50 lines of relay diagnostic log (Electron only) */
+  getRelayLog: () => ipcRenderer.invoke('get-relay-log'),
+
   /** Manually trigger an update check */
   checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
 

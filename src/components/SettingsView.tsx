@@ -68,6 +68,17 @@ function AddContactModal({ onSave, onCancel }: { onSave: (c: RecoveryContact) =>
 function RelayStatusSection() {
   const { t } = useTranslation()
   const { relayStatuses, localRelayUrl } = useApp()
+  const [relayLog, setRelayLog] = useState('')
+  const [showLog, setShowLog] = useState(false)
+  const isElectron = typeof window !== 'undefined' && (window as any).chronicleElectron
+
+  const loadLog = async () => {
+    if (isElectron && (window as any).chronicleElectron.getRelayLog) {
+      const log = await (window as any).chronicleElectron.getRelayLog()
+      setRelayLog(log || '(no log entries)')
+      setShowLog(true)
+    }
+  }
 
   const statusColour: Record<string, string> = {
     connected: 'var(--success)',
@@ -108,6 +119,22 @@ function RelayStatusSection() {
           ))
         )}
       </div>
+      {isElectron && (
+        <div style={{ marginTop: 8 }}>
+          <button className="btn btn-outline btn-sm" onClick={loadLog}>
+            Show relay diagnostic log
+          </button>
+          {showLog && (
+            <pre style={{
+              marginTop: 8, padding: 12, background: '#0a1628', color: '#c9a96e',
+              borderRadius: 6, fontSize: 11, overflowX: 'auto', maxHeight: 200,
+              overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+            }}>
+              {relayLog}
+            </pre>
+          )}
+        </div>
+      )}
     </div>
   )
 }
