@@ -272,6 +272,8 @@ function startRelay() {
       HOST:           RELAY_HOST,
       DB_PATH:        path.join(app.getPath('userData'), 'chronicle.db'),
       ALLOWLIST_PATH: path.join(app.getPath('userData'), 'allowlist.json'),
+      // Pass resourcesPath so the relay can find app node_modules in the asar
+      RESOURCES_PATH: process.resourcesPath || path.join(__dirname, '..'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })

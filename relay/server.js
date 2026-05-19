@@ -32,16 +32,23 @@ let WebSocket
 try {
   WebSocket = require('ws')
 } catch {
-  // Try the app root node_modules (one or two levels up from resources/relay/)
+  // In a packaged Electron build, app code lives inside app.asar.
+  // The relay runs outside the asar (in resources/relay/) so its require()
+  // doesn't automatically resolve the asar's node_modules.
+  // RESOURCES_PATH is set by the main process via the env var above.
+  const resourcesPath = process.env.RESOURCES_PATH || path.join(__dirname, '..')
   const candidates = [
+    path.join(resourcesPath, 'app.asar', 'node_modules', 'ws'),
+    path.join(resourcesPath, 'app.asar.unpacked', 'node_modules', 'ws'),
+    path.join(resourcesPath, 'app', 'node_modules', 'ws'),
+    path.join(resourcesPath, 'node_modules', 'ws'),
     path.join(__dirname, '..', 'node_modules', 'ws'),
     path.join(__dirname, '..', '..', 'node_modules', 'ws'),
-    path.join(__dirname, '..', '..', '..', 'node_modules', 'ws'),
   ]
   for (const c of candidates) {
-    if (fs.existsSync(c)) { WebSocket = require(c); break }
+    try { WebSocket = require(c); break } catch { /* try next */ }
   }
-  if (!WebSocket) throw new Error('ws module not found — install with: cd relay && npm install')
+  if (!WebSocket) throw new Error('ws not found. RESOURCES_PATH=' + resourcesPath + ' candidates: ' + candidates.join(', '))
 }
 
 // ── Configuration ─────────────────────────────────────────────────────────────
