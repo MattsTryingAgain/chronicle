@@ -531,18 +531,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setRelayStatuses(pool.getStatuses())
 
     // Connect to contact relays after the local relay is established.
-    // The delay lets the local relay WebSocket connection complete first.
-    // We capture the pool reference so if the session ends before the timeout
-    // fires, we don't connect on behalf of a signed-out user.
-    const capturedPool = pool
-    setTimeout(() => {
-      // Only proceed if the pool is still the active one (session still valid)
-      if (poolRef.current !== capturedPool) return
-      const allContacts = contactMgrRef.current.getAll()
-      for (const c of allContacts) {
-        connectToRelay(c.relay, capturedPool)
-      }
-    }, 2000)
+    // Contact relay connections happen in beginSession after contacts are
+    // loaded from storage — not here, because contacts aren't available yet
+    // at the time startRelay runs.
   }, [connectToRelay])
 
   const stopRelay = useCallback(() => {
@@ -561,6 +552,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setSessionWithRef({ npub, nsec, displayName })
       setScreen('main')
       startRelay()
+      // Allowlist own pubkey immediately — this is the most critical call.
+      // Without it the relay blocks ALL events including our own.
+      void allowlistAdd(npub)
       // Load contact list if stored
       void storageGet('chronicle:contacts').then(saved => {
         try {
@@ -570,8 +564,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
             if (mgr) {
               contactMgrRef.current = mgr
               setContacts([...mgr.getAll()])
-              // Contact relay connections happen inside startRelay after the
-              // pool is ready — not here, to avoid connecting before auth
+              // Allowlist all saved contacts so their events are accepted
+              for (const c of mgr.getAll()) {
+                void allowlistAdd(c.npub)
+              }
+              // Connect to contact relays now that we have the list and
+              // the session is confirmed active. Use a short delay to let
+              // the local relay connection establish first.
+              const pool = poolRef.current
+              if (pool) {
+                setTimeout(() => {
+                  if (poolRef.current !== pool) return // session ended
+                  for (const c of mgr.getAll()) {
+                    connectToRelay(c.relay, pool)
+                  }
+                }, 2000)
+              }
             }
           }
         } catch { /* non-fatal */ }
