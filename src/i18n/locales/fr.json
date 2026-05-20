@@ -115,7 +115,7 @@
     "exportSection": "Export et sauvegarde",
     "broadcast": {
       "title": "Diffusion",
-      "localTitle": "Local uniquement (privé)",
+      "localTitle": "Membres de la famille connectés (privé)",
       "localDesc": "Les événements sont stockés sur votre appareil uniquement. Rien ne quitte votre relais local.",
       "sharedTitle": "Relais familial partagé",
       "sharedDesc": "Publiez les événements sur un relais partagé pour que les membres connectés reçoivent les mises à jour automatiquement.",

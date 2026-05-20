@@ -42,7 +42,13 @@ import type { KeyMaterial, ChronicleEvent } from '../types/chronicle'
 
 // ─── Broadcast Target ─────────────────────────────────────────────────────────
 
-export type BroadcastTarget = 'local' | 'shared' | 'discovery'
+// Broadcast tiers:
+// 'peers'     — publish directly to connected family members (default, P2P)
+// 'shared'    — also publish to a shared relay (persistent store, offline delivery,
+//               backup/recovery) — URL configured by user
+// 'discovery' — also publish minimal events to a public relay for distant relative
+//               discovery (name fragment + relay address only, no ancestry data)
+export type BroadcastTarget = 'peers' | 'shared' | 'discovery'
 
 export interface BroadcastSettings {
   target: BroadcastTarget
@@ -152,7 +158,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const syncUnsubRef = useRef<(() => void) | null>(null)
 
   const [broadcastSettings, setBroadcastSettings] = useState<BroadcastSettings>({
-    target: 'local',
+    target: 'peers',
     sharedRelayUrl: '',
     discoveryRelayUrl: '',
   })
@@ -379,11 +385,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const next = { ...prev, ...settings }
       if (poolRef.current) {
         const pool = poolRef.current
-        if (next.target !== 'local' && next.sharedRelayUrl && next.target === 'shared') {
-          pool.add(next.sharedRelayUrl).connect()
+        // Shared relay — connect when URL is set and target is 'shared' or 'discovery'
+        if (next.sharedRelayUrl && (next.target === 'shared' || next.target === 'discovery')) {
+          const client = pool.add(next.sharedRelayUrl)
+          client.connect()
+          broadcastQueue.attachToRelay(client)
         } else if (prev.sharedRelayUrl && prev.sharedRelayUrl !== next.sharedRelayUrl) {
           pool.remove(prev.sharedRelayUrl)
         }
+        // Discovery relay — connect when URL is set and target is 'discovery'
         if (next.target === 'discovery' && next.discoveryRelayUrl) {
           pool.add(next.discoveryRelayUrl).connect()
         } else if (prev.discoveryRelayUrl && prev.target === 'discovery' && next.target !== 'discovery') {
@@ -489,6 +499,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     broadcastQueue.attachToRelay(client)
     pool.connect()
     setRelayStatuses(pool.getStatuses())
+
+    // Connect to contact relays AFTER the pool is ready and the local relay
+    // subscription is established. This ensures:
+    // 1. We only connect when a session is active (startRelay only runs after login)
+    // 2. The local relay is set up first so our own events are accessible
+    // 3. Contact pubkeys are included in the sync filter from the start
+    // Small delay to let the local relay connection establish before reaching out
+    setTimeout(() => {
+      const allContacts = contactMgrRef.current.getAll()
+      for (const c of allContacts) {
+        connectToRelay(c.relay, pool)
+      }
+    }, 2000)
   }, [connectToRelay])
 
   const stopRelay = useCallback(() => {
@@ -516,13 +539,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             if (mgr) {
               contactMgrRef.current = mgr
               setContacts([...mgr.getAll()])
-              // Reconnect to all known contact relays on session restore
-              const allContacts = mgr.getAll()
-              if (poolRef.current && allContacts.length > 0) {
-                for (const c of allContacts) {
-                  connectToRelay(c.relay, poolRef.current)
-                }
-              }
+              // Contact relay connections happen inside startRelay after the
+              // pool is ready — not here, to avoid connecting before auth
             }
           }
         } catch { /* non-fatal */ }

@@ -149,7 +149,7 @@ function BroadcastControlsSection() {
   const [discoveryUrl, setDiscoveryUrl] = useState(broadcastSettings.discoveryRelayUrl)
   const [saved, setSaved] = useState(false)
 
-  const handleTargetChange = useCallback((target: 'local' | 'shared' | 'discovery') => {
+  const handleTargetChange = useCallback((target: 'peers' | 'shared' | 'discovery') => {
     updateBroadcastSettings({ target })
   }, [updateBroadcastSettings])
 
@@ -180,8 +180,8 @@ function BroadcastControlsSection() {
           <input
             type="radio"
             name="broadcastTarget"
-            checked={broadcastSettings.target === 'local'}
-            onChange={() => handleTargetChange('local')}
+            checked={broadcastSettings.target === 'peers'}
+            onChange={() => handleTargetChange('peers')}
             style={{ marginTop: 3, accentColor: 'var(--gold)' }}
           />
           <div>
@@ -251,7 +251,7 @@ function BroadcastControlsSection() {
       </div>
 
       {/* Save button — only shown if a URL field is visible */}
-      {broadcastSettings.target !== 'local' && (
+      {broadcastSettings.target !== 'peers' && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginTop: 'var(--space-sm)' }}>
           <button className="btn btn-outline btn-sm" onClick={handleSaveUrls}>
             {saved ? t('settings.broadcast.saved') : t('settings.broadcast.saveUrl')}
