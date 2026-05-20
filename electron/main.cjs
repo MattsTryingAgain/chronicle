@@ -131,6 +131,61 @@ ipcMain.handle('get-version',   () => app.getVersion())
 ipcMain.handle('get-relay-port', () => RELAY_PORT)
 ipcMain.handle('get-instance',   () => instanceNum)
 
+// Write pubkey directly to the allowlist file AND notify the running relay
+// via HTTP. Writing the file directly handles the case where the relay isn't
+// up yet — it will load the file on startup. The HTTP call handles the live
+// case where we need the relay to accept events from this pubkey immediately.
+ipcMain.handle('allowlist-add', async (_event, hexPubkey) => {
+  if (typeof hexPubkey !== 'string' || hexPubkey.length !== 64) {
+    return { ok: false, error: 'invalid pubkey' }
+  }
+  // Write to file directly (relay reads this on startup)
+  const allowlistPath = path.join(app.getPath('userData'), 'allowlist.json')
+  try {
+    let current = []
+    if (fs.existsSync(allowlistPath)) {
+      current = JSON.parse(fs.readFileSync(allowlistPath, 'utf8'))
+    }
+    if (!current.includes(hexPubkey)) {
+      current.push(hexPubkey)
+      fs.writeFileSync(allowlistPath, JSON.stringify(current, null, 2))
+      relayLog(`[main] allowlist: added ${hexPubkey.slice(0, 8)}… (file written)`)
+    }
+  } catch (e) {
+    relayLog(`[main] allowlist file write failed: ${e.message}`)
+  }
+  // Also notify the running relay via HTTP so it takes effect immediately
+  // without requiring a restart. Retry a few times to handle relay startup delay.
+  const tryHttp = async (attempts) => {
+    try {
+      const http = require('http')
+      await new Promise((resolve, reject) => {
+        const body = JSON.stringify({ pubkey: hexPubkey })
+        const req = http.request({
+          hostname: '127.0.0.1', port: RELAY_PORT, path: '/allowlist/add',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        }, (res) => {
+          relayLog(`[main] allowlist HTTP response: ${res.statusCode}`)
+          resolve(res.statusCode)
+        })
+        req.on('error', reject)
+        req.write(body)
+        req.end()
+      })
+    } catch (e) {
+      if (attempts > 0) {
+        await new Promise(r => setTimeout(r, 1000))
+        await tryHttp(attempts - 1)
+      } else {
+        relayLog(`[main] allowlist HTTP failed after retries: ${e.message}`)
+      }
+    }
+  }
+  tryHttp(5)  // retry up to 5 times, 1 second apart
+  return { ok: true }
+})
+
 ipcMain.handle('check-for-update', async () => {
   if (!autoUpdater) return { error: 'Updater not available' }
   try { await autoUpdater.checkForUpdates(); return { ok: true } }

@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('chronicleElectron', {
   /** Get last 50 lines of relay diagnostic log (Electron only) */
   getRelayLog: () => ipcRenderer.invoke('get-relay-log'),
 
+  /** Add a hex pubkey to the relay allowlist (writes file + notifies relay) */
+  allowlistAdd: (hexPubkey) => ipcRenderer.invoke('allowlist-add', hexPubkey),
+
   /** Manually trigger an update check */
   checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
 

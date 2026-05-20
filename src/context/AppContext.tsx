@@ -150,6 +150,13 @@ const AppContext = createContext<AppContextValue | null>(null)
 export function AppProvider({ children }: { children: ReactNode }) {
   const [screen, setScreen] = useState<AppScreen>('onboarding-create')
   const [session, setSession] = useState<SessionIdentity | null>(null)
+  // sessionRef mirrors session state synchronously — useCallback closures
+  // can read this without stale-closure issues
+  const sessionRef = useRef<SessionIdentity | null>(null)
+  const setSessionWithRef = useCallback((s: SessionIdentity | null) => {
+    sessionRef.current = s
+    setSession(s)
+  }, [])
   const [hasStoredIdentity, setHasStoredIdentity] = useState(false)
   const [isGeneratingKey, setIsGeneratingKey] = useState(false)
   const [generatedMnemonic, setGeneratedMnemonic] = useState<string | null>(null)
@@ -191,16 +198,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
         try { hexPubkey = npubToHex(npubOrHex) } catch { return }
       }
       if (hexPubkey.length !== 64) return  // not a valid hex pubkey
+
+      // In Electron: use IPC which writes the allowlist file directly AND
+      // retries the HTTP call until the relay is up. This handles the case
+      // where allowlistAdd is called before the relay HTTP server is ready.
+      const electron = typeof window !== 'undefined' && (window as any).chronicleElectron
+      if (electron?.allowlistAdd) {
+        await electron.allowlistAdd(hexPubkey)
+        return
+      }
+
+      // Browser dev mode fallback — relay must already be running
       await fetch(`http://127.0.0.1:${_relayPort}/allowlist/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pubkey: hexPubkey }),
       })
-    } catch { /* non-fatal — relay may not be running */ }
+    } catch { /* non-fatal */ }
   }, [])
 
   // connectToRelay declared before addContact — addContact depends on it.
   const connectToRelay = useCallback((url: string, pool: InstanceType<typeof RelayPool>) => {
+    // Never connect to external relays without an active session — prevents
+    // instance 1 from connecting to instance 2's relay before instance 2 logs in
+    if (!sessionRef.current) return
     const existing = pool.getStatuses()
     if (url in existing) return  // already added (may still be connecting)
     const client = pool.add(url)
@@ -534,7 +555,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const beginSession = useCallback(
     (npub: string, nsec: string, displayName: string) => {
-      setSession({ npub, nsec, displayName })
+      setSessionWithRef({ npub, nsec, displayName })
       setScreen('main')
       startRelay()
       // Load contact list if stored
@@ -579,7 +600,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           createdAt: Math.floor(Date.now() / 1000),
         })
         void allowlistAdd(km.npub)
-        setSession({ npub: km.npub, nsec: km.nsec, displayName })
+        setSessionWithRef({ npub: km.npub, nsec: km.nsec, displayName })
         setHasStoredIdentity(true)
         persistStore()
         return km
@@ -650,7 +671,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(() => {
     stopRelay()
-    setSession(null)
+    setSessionWithRef(null)
     setGeneratedMnemonic(null)
     setScreen('onboarding-create')
     contactMgrRef.current = new ContactListManager()

@@ -463,16 +463,22 @@ const httpServer = http.createServer((req, res) => {
     req.on('data', d => { body += d })
     req.on('end', () => {
       try {
+        // Also reload the file first — the main process may have written it
+        // directly via IPC before the relay was ready to receive HTTP calls
+        allowlist.load()
         const { pubkey } = JSON.parse(body)
         if (typeof pubkey === 'string' && pubkey.length === 64) {
           allowlist.add(pubkey)
+          console.log(`[relay] Allowlist: added ${pubkey.slice(0, 8)}… (total: ${allowlist.pubkeys.size})`)
           res.writeHead(200, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ ok: true }))
+          res.end(JSON.stringify({ ok: true, total: allowlist.pubkeys.size }))
         } else {
+          console.warn(`[relay] Allowlist: rejected invalid pubkey (length=${pubkey?.length})`)
           res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ ok: false, error: 'invalid pubkey' }))
+          res.end(JSON.stringify({ ok: false, error: 'pubkey must be 64-char hex' }))
         }
-      } catch {
+      } catch (e) {
+        console.error('[relay] Allowlist add error:', e.message)
         res.writeHead(400, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ ok: false, error: 'invalid JSON' }))
       }
