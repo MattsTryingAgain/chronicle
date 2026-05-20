@@ -47,7 +47,7 @@ interface PossibleMatchesPanelProps {
 }
 
 export function PossibleMatchesPanel({ syncVersion }: PossibleMatchesPanelProps) {
-  const { session, publishEvent } = useApp()
+  const { session, publishEvent, contacts } = useApp()
   const [candidates, setCandidates] = useState<MatchCandidate[]>([])
   const [dismissed, setDismissed] = useState<Set<string>>(loadDismissed)
   const [confirming, setConfirming] = useState<string | null>(null)
@@ -57,37 +57,51 @@ export function PossibleMatchesPanel({ syncVersion }: PossibleMatchesPanelProps)
     const allPersons = store.getAllPersons()
     if (allPersons.length < 2) { setCandidates([]); return }
 
-    const allClaims   = store.getAllClaims()
+    const allClaims     = store.getAllClaims()
     const existingLinks = getAllSamePersonLinks()
-    const allPubkeys  = allPersons.map(p => p.pubkey)
 
-    // Find candidates — compare every pair
-    const raw = findMatchCandidates(allPubkeys, allPubkeys, allClaims, {
-      minConfidence: 0.4,
-    })
+    // Split persons into "local" (added by this instance's identity) vs
+    // "remote" (came from a connected contact's sync). We only want to surface
+    // cross-instance duplicates, not flag two different people in the same tree.
+    // A person is "remote" if their claims are authored by a contact's pubkey.
+    const contactNpubs = new Set(contacts.map(c => c.npub))
+    const remotePubkeys = new Set<string>()
+    for (const claim of allClaims) {
+      if (contactNpubs.has(claim.claimantPubkey)) {
+        remotePubkeys.add(claim.subjectPubkey)
+      }
+    }
 
-    // Filter out:
-    // - pairs already linked
-    // - pairs the user dismissed
-    // - pairs where both pubkeys are the same
+    const localPubkeys = allPersons
+      .map(p => p.pubkey)
+      .filter(pk => !remotePubkeys.has(pk))
+
+    // If we have no remote persons yet, fall back to comparing all vs all
+    // (handles the case before contact distinction is established)
+    const setA = localPubkeys.length > 0 && remotePubkeys.size > 0
+      ? localPubkeys
+      : allPersons.map(p => p.pubkey)
+    const setB = localPubkeys.length > 0 && remotePubkeys.size > 0
+      ? [...remotePubkeys]
+      : allPersons.map(p => p.pubkey)
+
+    // Lower threshold: exact name match scores 0.35, which is enough signal
+    const raw = findMatchCandidates(setA, setB, allClaims, { minConfidence: 0.3 })
+
+    // Filter out already-linked, dismissed, and same-pubkey pairs
+    const seen = new Set<string>()
     const filtered = raw.filter(c => {
       if (c.pubkeyA === c.pubkeyB) return false
-      if (alreadyLinked(c.pubkeyA, c.pubkeyB, existingLinks)) return false
-      if (dismissed.has(pairKey(c.pubkeyA, c.pubkeyB))) return false
-      return true
-    })
-
-    // Deduplicate — findMatchCandidates returns A→B and B→A as separate entries
-    const seen = new Set<string>()
-    const deduped = filtered.filter(c => {
       const key = pairKey(c.pubkeyA, c.pubkeyB)
       if (seen.has(key)) return false
       seen.add(key)
+      if (alreadyLinked(c.pubkeyA, c.pubkeyB, existingLinks)) return false
+      if (dismissed.has(key)) return false
       return true
     })
 
-    setCandidates(deduped)
-  }, [syncVersion, dismissed])
+    setCandidates(filtered)
+  }, [syncVersion, dismissed, contacts])
 
   const handleConfirm = useCallback(async (candidate: MatchCandidate) => {
     if (!session) return
