@@ -60,30 +60,33 @@ export function PossibleMatchesPanel({ syncVersion }: PossibleMatchesPanelProps)
     const allClaims     = store.getAllClaims()
     const existingLinks = getAllSamePersonLinks()
 
-    // Split persons into "local" (added by this instance's identity) vs
-    // "remote" (came from a connected contact's sync). We only want to surface
-    // cross-instance duplicates, not flag two different people in the same tree.
-    // A person is "remote" if their claims are authored by a contact's pubkey.
+    // Split persons into "mine" vs "theirs".
+    // "Mine" = persons whose claims are authored by this session's own npub.
+    // "Theirs" = persons whose claims are authored by a contact's npub.
+    // We compare mine vs theirs only — never mine vs mine or theirs vs theirs —
+    // to avoid flagging two different people in the same tree as potential dupes.
+    const myNpub = session?.npub ?? ''
     const contactNpubs = new Set(contacts.map(c => c.npub))
-    const remotePubkeys = new Set<string>()
+
+    const myPubkeys  = new Set<string>()
+    const theirPubkeys = new Set<string>()
+
     for (const claim of allClaims) {
-      if (contactNpubs.has(claim.claimantPubkey)) {
-        remotePubkeys.add(claim.subjectPubkey)
+      if (claim.claimantPubkey === myNpub) {
+        myPubkeys.add(claim.subjectPubkey)
+      } else if (contactNpubs.has(claim.claimantPubkey)) {
+        theirPubkeys.add(claim.subjectPubkey)
       }
     }
 
-    const localPubkeys = allPersons
-      .map(p => p.pubkey)
-      .filter(pk => !remotePubkeys.has(pk))
+    // If the split doesn't produce two distinct sets, skip — nothing to compare
+    if (myPubkeys.size === 0 || theirPubkeys.size === 0) {
+      setCandidates([])
+      return
+    }
 
-    // If we have no remote persons yet, fall back to comparing all vs all
-    // (handles the case before contact distinction is established)
-    const setA = localPubkeys.length > 0 && remotePubkeys.size > 0
-      ? localPubkeys
-      : allPersons.map(p => p.pubkey)
-    const setB = localPubkeys.length > 0 && remotePubkeys.size > 0
-      ? [...remotePubkeys]
-      : allPersons.map(p => p.pubkey)
+    const setA = [...myPubkeys]
+    const setB = [...theirPubkeys]
 
     // Lower threshold: exact name match scores 0.35, which is enough signal
     const raw = findMatchCandidates(setA, setB, allClaims, { minConfidence: 0.3 })

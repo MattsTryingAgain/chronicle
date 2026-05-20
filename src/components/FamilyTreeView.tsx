@@ -232,6 +232,7 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
   const [truncated, setTruncated]       = useState(false)
   const [selectedPubkey, setSelectedPubkey] = useState<string | null>(null)
   const [treeVersion, setTreeVersion] = useState(0)
+  const { syncVersion } = useApp()
 
   const handleClosePanel  = useCallback(() => setSelectedPubkey(null), [])
   const handleMakeRoot    = useCallback((pk: string) => onSelectPerson?.(pk), [onSelectPerson])
@@ -571,7 +572,7 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
         .translate(width / 2 - scale * cx, height / 2 - scale * cy)
         .scale(scale))
     }
-  }, [rootPubkey, selectedPubkey, treeVersion])
+  }, [rootPubkey, selectedPubkey, treeVersion, syncVersion])
 
   useEffect(() => { draw() }, [draw])
   useEffect(() => {
