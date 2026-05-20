@@ -35,6 +35,14 @@ type JoinAcceptHandler  = (accept: JoinAccept) => void
 let onJoinRequestReceived: JoinRequestHandler | null = null
 let onJoinAcceptReceived:  JoinAcceptHandler  | null = null
 
+// Contact pubkeys provider — AppContext sets this so relaySync can include
+// contact pubkeys in subscription filters without importing AppContext.
+let getContactPubkeys: (() => string[]) | null = null
+
+export function setContactPubkeysProvider(fn: () => string[]): void {
+  getContactPubkeys = fn
+}
+
 export function setJoinRequestHandler(fn: JoinRequestHandler): void {
   onJoinRequestReceived = fn
 }
@@ -392,6 +400,16 @@ function collectKnownPubkeys(): string[] {
     const hex = npubToHex(contact.pubkey)
     if (hex) pubkeys.add(hex)
     else if (contact.pubkey.length === 64) pubkeys.add(contact.pubkey)
+  }
+
+  // Connected family members (from contact list)
+  // Their pubkeys are npub1... format — convert to hex for the filter
+  if (getContactPubkeys) {
+    for (const npub of getContactPubkeys()) {
+      const hex = npubToHex(npub)
+      if (hex) pubkeys.add(hex)
+      else if (npub.length === 64) pubkeys.add(npub)
+    }
   }
 
   return [...pubkeys]

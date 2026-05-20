@@ -26,7 +26,7 @@ import { generateUserKeyMaterial, importKeyMaterial, nsecToHex } from '../lib/ke
 import { encryptWithPassword, decryptWithPassword } from '../lib/storage'
 import { RelayPool, type RelayStatus } from '../lib/relay'
 import { broadcastQueue } from '../lib/queue'
-import { startSync, fetchOnConnect, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests } from '../lib/relaySync'
+import { startSync, fetchOnConnect, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, setContactPubkeysProvider } from '../lib/relaySync'
 import { buildJoinRequestEvent, buildJoinAcceptEvent } from '../lib/eventBuilder'
 import { ContactListManager, type Contact } from '../lib/contactList'
 import { MergeQueue, type SyncSession } from '../lib/syncMerge'
@@ -195,8 +195,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     client.onStatusChange((status) => {
       setRelayStatuses({ ...pool.getStatuses() })
       if (status === 'connected') {
+        // Pull events from this relay authored by known pubkeys (including contacts)
         fetchOnConnect(client).catch(() => {})
         startSync(client)
+        // Push our own events to this relay so the remote instance can see
+        // our tree data. Events live in our local relay but not in theirs —
+        // this is what makes bidirectional sync work.
+        const ownEvents = store.getAllRawEvents()
+        for (const event of ownEvents) {
+          client.publish(event)
+        }
       }
     })
     broadcastQueue.attachToRelay(client)
@@ -219,9 +227,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     relayTableRef.current.addKnown(relay, npub)
     setContacts([...contactMgrRef.current.getAll()])
     setKnownRelays(relayTableRef.current.getRanked())
-    if (poolRef.current) connectToRelay(relay, poolRef.current)
-    // Always allowlist a contact — covers the mutual-invite case where the
-    // formal accept flow was bypassed (both sides generated invites)
+    if (poolRef.current) {
+      connectToRelay(relay, poolRef.current)
+      // Re-fetch from all connected relays with updated pubkey list so we
+      // immediately pull in the new contact's events
+      for (const [url] of Object.entries(poolRef.current.getStatuses())) {
+        const client = poolRef.current.add(url)
+        if (client.getStatus() === 'connected') {
+          fetchOnConnect(client).catch(() => {})
+        }
+      }
+    }
+    // Always allowlist a contact
     void allowlistAdd(npub)
     if (session?.nsec) void storageSet('chronicle:contacts', contactMgrRef.current.encrypt(nsecToHex(session.nsec)))
   }, [connectToRelay, session, allowlistAdd])
@@ -438,6 +455,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const pool = new RelayPool()
     poolRef.current = pool
     startRelayStarting.current = false
+
+    // Provide contact pubkeys to relaySync so it includes them in subscription
+    // filters — without this, each instance only fetches events from pubkeys
+    // it already knows locally, and never sees the other instance's tree data.
+    setContactPubkeysProvider(() => contactMgrRef.current.getAll().map(c => c.npub))
 
     // Register join request/accept handlers so incoming events update the UI
     setJoinRequestHandler((req) => {
