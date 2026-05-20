@@ -204,9 +204,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // where allowlistAdd is called before the relay HTTP server is ready.
       const electron = typeof window !== 'undefined' && (window as any).chronicleElectron
       if (electron?.allowlistAdd) {
-        await electron.allowlistAdd(hexPubkey)
+        console.log('[allowlistAdd] calling IPC with hex:', hexPubkey.slice(0, 8) + '…')
+        const result = await electron.allowlistAdd(hexPubkey)
+        console.log('[allowlistAdd] IPC result:', result)
         return
       }
+      console.log('[allowlistAdd] no IPC available, using HTTP fetch')
 
       // Browser dev mode fallback — relay must already be running
       await fetch(`http://127.0.0.1:${_relayPort}/allowlist/add`, {

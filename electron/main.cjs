@@ -136,11 +136,14 @@ ipcMain.handle('get-instance',   () => instanceNum)
 // up yet — it will load the file on startup. The HTTP call handles the live
 // case where we need the relay to accept events from this pubkey immediately.
 ipcMain.handle('allowlist-add', async (_event, hexPubkey) => {
+  relayLog(`[main] allowlist-add IPC called with: ${String(hexPubkey).slice(0, 16)}… length=${String(hexPubkey).length}`)
   if (typeof hexPubkey !== 'string' || hexPubkey.length !== 64) {
+    relayLog(`[main] allowlist-add REJECTED: invalid pubkey (length=${String(hexPubkey).length})`)
     return { ok: false, error: 'invalid pubkey' }
   }
   // Write to file directly (relay reads this on startup)
   const allowlistPath = path.join(app.getPath('userData'), 'allowlist.json')
+  relayLog(`[main] allowlist-add writing to: ${allowlistPath}`)
   try {
     let current = []
     if (fs.existsSync(allowlistPath)) {
@@ -380,6 +383,9 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:5173')
     mainWindow.webContents.openDevTools()
   } else {
+    // Temporarily open DevTools in production to diagnose sync issues
+    // TODO: remove before public release
+    mainWindow.webContents.openDevTools()
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
   }
 
