@@ -4,7 +4,7 @@
  * lets user add ancestors.
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { store } from '../lib/storage'
 import { ProfileCard } from './ProfileCard'
@@ -62,6 +62,10 @@ export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string)
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingPubkey, setEditingPubkey] = useState<string | null>(null)
   const [, forceUpdate] = useState(0)
+  const { syncVersion } = useApp()
+
+  // Re-render whenever remote sync delivers new data
+  useEffect(() => { forceUpdate(n => n + 1) }, [syncVersion])
 
   const refresh = useCallback(() => forceUpdate(n => n + 1), [])
 

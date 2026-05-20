@@ -32,6 +32,10 @@ import type { JoinRequest, JoinAccept } from './joinRequest'
 type JoinRequestHandler = (req: JoinRequest) => void
 type JoinAcceptHandler  = (accept: JoinAccept) => void
 
+// Called after batches of events are ingested so the UI can re-render
+let onSyncUpdate: (() => void) | null = null
+export function setSyncUpdateHandler(fn: () => void): void { onSyncUpdate = fn }
+
 let onJoinRequestReceived: JoinRequestHandler | null = null
 let onJoinAcceptReceived:  JoinAcceptHandler  | null = null
 
@@ -151,6 +155,13 @@ export function fetchOnConnect(client: RelayClient): Promise<SyncResult> {
  * Handles all Chronicle event kinds. Unknown kinds are stored as raw events only.
  * Returns true if the event was stored (false if it was a duplicate).
  */
+let _syncUpdatePending = false
+function scheduleSyncUpdate() {
+  if (_syncUpdatePending || !onSyncUpdate) return
+  _syncUpdatePending = true
+  setTimeout(() => { _syncUpdatePending = false; onSyncUpdate?.() }, 200)
+}
+
 export function ingestEvent(event: ChronicleEvent): boolean {
   console.log(`[ingestEvent] kind=${event.kind} from ${event.pubkey?.slice(0,8)}…`)
   // JOIN_REQUEST and JOIN_ACCEPT are never deduplicated — the callback must
@@ -162,6 +173,7 @@ export function ingestEvent(event: ChronicleEvent): boolean {
   }
 
   store.addRawEvent(event)
+  scheduleSyncUpdate()
 
   // Check for newer schema versions in every ingested event
   schemaVersionChecker.ingestEvent(event)
@@ -247,6 +259,17 @@ function ingestFactClaim(event: ChronicleEvent): void {
     createdAt: event.created_at,
     retracted: false,
     confidenceScore: 0, // recomputed at read time
+  }
+
+  // Ensure the person exists before storing the claim — they may not have an
+  // identity anchor event if they were added by a remote user who didn't publish one
+  if (!store.getPerson(subject)) {
+    store.upsertPerson({
+      pubkey: subject,
+      displayName: subject.slice(0, 8) + '…',
+      isLiving: false,
+      createdAt: event.created_at,
+    })
   }
 
   store.addClaim(claim)

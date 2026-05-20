@@ -26,7 +26,7 @@ import { generateUserKeyMaterial, importKeyMaterial, nsecToHex, npubToHex } from
 import { encryptWithPassword, decryptWithPassword } from '../lib/storage'
 import { RelayPool, type RelayStatus } from '../lib/relay'
 import { broadcastQueue } from '../lib/queue'
-import { startSync, fetchOnConnect, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, setContactPubkeysProvider } from '../lib/relaySync'
+import { startSync, fetchOnConnect, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, setContactPubkeysProvider, setSyncUpdateHandler } from '../lib/relaySync'
 import { buildJoinRequestEvent, buildJoinAcceptEvent } from '../lib/eventBuilder'
 import { ContactListManager, type Contact } from '../lib/contactList'
 import { MergeQueue, type SyncSession } from '../lib/syncMerge'
@@ -111,6 +111,8 @@ interface AppContextValue {
   publishEvent: (event: ChronicleEvent) => void
   relayStatuses: Record<string, RelayStatus>
   localRelayUrl: string
+  /** Increments every time remote sync delivers new data — components use this to re-render */
+  syncVersion: number
   broadcastSettings: BroadcastSettings
   updateBroadcastSettings: (settings: Partial<BroadcastSettings>) => void
   syncStatus: 'idle' | 'syncing' | 'done' | 'error'
@@ -170,6 +172,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     discoveryRelayUrl: '',
   })
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle')
+  const [syncVersion, setSyncVersion] = useState(0)
 
   // ── Stage 4 state ──────────────────────────────────────────────────────────
   const contactMgrRef = useRef<ContactListManager>(new ContactListManager())
@@ -502,6 +505,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // filters — without this, each instance only fetches events from pubkeys
     // it already knows locally, and never sees the other instance's tree data.
     setContactPubkeysProvider(() => contactMgrRef.current.getAll().map(c => c.npub))
+    setSyncUpdateHandler(() => setSyncVersion(v => v + 1))
 
     // Register join request/accept handlers so incoming events update the UI
     setJoinRequestHandler((req) => {
@@ -763,6 +767,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         generatedMnemonic,
         publishEvent,
         relayStatuses,
+        syncVersion,
         localRelayUrl: LOCAL_RELAY_URL,
         broadcastSettings,
         updateBroadcastSettings,

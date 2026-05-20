@@ -39,7 +39,7 @@ import { store } from '../lib/storage'
 import { serialiseGraph, getRelationshipsFor, retractRelationship } from '../lib/graph'
 import { storageSet } from '../lib/appStorage'
 import { useApp } from '../context/AppContext'
-import { buildFactClaim, buildRelationshipClaim } from '../lib/eventBuilder'
+import { buildFactClaim, buildRelationshipClaim, buildIdentityAnchor } from '../lib/eventBuilder'
 import { addRelationship } from '../lib/graph'
 import { generateAncestorKeyPair } from '../lib/keys'
 import type { FactField, FactClaim, Person } from '../types/chronicle'
@@ -259,6 +259,11 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
         else { const kp = generateAncestorKeyPair(); pubkey = kp.npub; isLiving = false }
         person = { pubkey, displayName: name.trim(), isLiving, createdAt: now }
         store.upsertPerson(person)
+        // Publish an identity anchor event so remote instances know this person exists
+        if (session?.nsec) {
+          const anchor = buildIdentityAnchor(pubkey, session.npub, session.nsec)
+          publishEvent(anchor)
+        }
       }
 
       const claimantPubkey = session?.npub ?? selfPubkey ?? person.pubkey
