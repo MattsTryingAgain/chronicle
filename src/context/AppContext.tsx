@@ -228,19 +228,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const existing = pool.getStatuses()
     if (url in existing) return  // already added (may still be connecting)
     const client = pool.add(url)
+    console.log(`[connectToRelay] added ${url}, status=${client.getStatus()}`)
     client.onStatusChange((status) => {
+      console.log(`[connectToRelay] ${url} status → ${status}`)
       setRelayStatuses({ ...pool.getStatuses() })
       if (status === 'connected') {
-        // Pull events from this relay authored by known pubkeys (including contacts)
-        fetchOnConnect(client).catch(() => {})
-        startSync(client)
-        // Push our own events to this relay so the remote instance can see
-        // our tree data. Events live in our local relay but not in theirs —
-        // this is what makes bidirectional sync work.
         const ownEvents = store.getAllRawEvents()
+        console.log(`[connectToRelay] connected to ${url}, pushing ${ownEvents.length} own events, fetching remote`)
+        // Pull events from this relay authored by known pubkeys (including contacts)
+        fetchOnConnect(client).catch((e) => console.error('[connectToRelay] fetchOnConnect error:', e))
+        startSync(client)
+        // Push our own events to this relay so the remote instance can see our tree data
         for (const event of ownEvents) {
           client.publish(event)
         }
+        console.log(`[connectToRelay] push complete`)
       }
     })
     broadcastQueue.attachToRelay(client)

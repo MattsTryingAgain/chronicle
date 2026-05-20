@@ -340,9 +340,11 @@ function handleMessage(ws, socketId, raw) {
     // event kinds require the sender to be on the allowlist.
     const KIND_JOIN_REQUEST = 30091
     if (event.kind !== KIND_JOIN_REQUEST && !allowlist.has(event.pubkey)) {
+      console.log(`[relay] BLOCKED event kind=${event.kind} from ${event.pubkey.slice(0,8)}… (not in allowlist, size=${allowlist.pubkeys.size})`)
       send(ws, ['OK', event.id, false, 'blocked: pubkey not in allowlist'])
       return
     }
+    console.log(`[relay] ACCEPTED event kind=${event.kind} from ${event.pubkey.slice(0,8)}…`)
 
     // Kind check — relay only stores Chronicle kinds
     if (!CHRONICLE_KINDS.has(event.kind)) {

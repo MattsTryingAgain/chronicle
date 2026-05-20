@@ -152,6 +152,7 @@ export function fetchOnConnect(client: RelayClient): Promise<SyncResult> {
  * Returns true if the event was stored (false if it was a duplicate).
  */
 export function ingestEvent(event: ChronicleEvent): boolean {
+  console.log(`[ingestEvent] kind=${event.kind} from ${event.pubkey?.slice(0,8)}…`)
   // JOIN_REQUEST and JOIN_ACCEPT are never deduplicated — the callback must
   // fire every time they arrive so the UI can react even after a restart.
   const isHandshake = event.kind === EventKind.JOIN_REQUEST || event.kind === EventKind.JOIN_ACCEPT
