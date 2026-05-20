@@ -22,7 +22,7 @@ import {
   type ReactNode,
 } from 'react'
 import { store, MemoryStore, type StoredIdentity } from '../lib/storage'
-import { generateUserKeyMaterial, importKeyMaterial, nsecToHex } from '../lib/keys'
+import { generateUserKeyMaterial, importKeyMaterial, nsecToHex, npubToHex } from '../lib/keys'
 import { encryptWithPassword, decryptWithPassword } from '../lib/storage'
 import { RelayPool, type RelayStatus } from '../lib/relay'
 import { broadcastQueue } from '../lib/queue'
@@ -185,10 +185,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // otherwise be declared. connectToRelay second — addContact depends on it.
   const allowlistAdd = useCallback(async (npubOrHex: string): Promise<void> => {
     try {
+      // The relay requires a 64-char hex pubkey. Convert from npub if needed.
+      let hexPubkey = npubOrHex
+      if (npubOrHex.startsWith('npub1')) {
+        try { hexPubkey = npubToHex(npubOrHex) } catch { return }
+      }
+      if (hexPubkey.length !== 64) return  // not a valid hex pubkey
       await fetch(`http://127.0.0.1:${_relayPort}/allowlist/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pubkey: npubOrHex }),
+        body: JSON.stringify({ pubkey: hexPubkey }),
       })
     } catch { /* non-fatal — relay may not be running */ }
   }, [])
@@ -500,16 +506,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     pool.connect()
     setRelayStatuses(pool.getStatuses())
 
-    // Connect to contact relays AFTER the pool is ready and the local relay
-    // subscription is established. This ensures:
-    // 1. We only connect when a session is active (startRelay only runs after login)
-    // 2. The local relay is set up first so our own events are accessible
-    // 3. Contact pubkeys are included in the sync filter from the start
-    // Small delay to let the local relay connection establish before reaching out
+    // Connect to contact relays after the local relay is established.
+    // The delay lets the local relay WebSocket connection complete first.
+    // We capture the pool reference so if the session ends before the timeout
+    // fires, we don't connect on behalf of a signed-out user.
+    const capturedPool = pool
     setTimeout(() => {
+      // Only proceed if the pool is still the active one (session still valid)
+      if (poolRef.current !== capturedPool) return
       const allContacts = contactMgrRef.current.getAll()
       for (const c of allContacts) {
-        connectToRelay(c.relay, pool)
+        connectToRelay(c.relay, capturedPool)
       }
     }, 2000)
   }, [connectToRelay])
