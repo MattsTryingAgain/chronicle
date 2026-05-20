@@ -15,6 +15,7 @@ import { InviteModal } from './components/InviteModal'
 import { ContactListView } from './components/ContactListView'
 import { SyncMergePrompt } from './components/SyncMergePrompt'
 import { JoinRequestView } from './components/JoinRequestView'
+import { PossibleMatchesPanel } from './components/PossibleMatchesPanel'
 import { TrustRevocationModal } from './components/TrustRevocationModal'
 import { AboutView } from './components/AboutView'
 import { NewVersionBanner } from './components/NewVersionBanner'
@@ -47,7 +48,7 @@ function ConnectTab() {
   const {
     session, localRelayUrl, contacts, removeContact,
     joinRequests, acceptJoinRequest, rejectJoinRequest, reportBadActor,
-    sendJoinRequest,
+    sendJoinRequest, syncVersion,
   } = useApp()
 
   const [showInvite, setShowInvite] = useState(false)
@@ -71,6 +72,10 @@ function ConnectTab() {
       </div>
 
       <ContactListView contacts={contacts} onRemove={removeContact} />
+
+      {contacts.length > 0 && (
+        <PossibleMatchesPanel syncVersion={syncVersion} />
+      )}
 
       {contacts.length > 0 && (
         <div className="mt-3">
