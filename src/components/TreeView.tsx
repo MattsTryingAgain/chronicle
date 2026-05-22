@@ -7,6 +7,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { store } from '../lib/storage'
+import { getAllSamePersonLinks } from '../lib/graph'
 import { ProfileCard } from './ProfileCard'
 import { AddPersonModal } from './AddPersonModal'
 import { useApp } from '../context/AppContext'
@@ -69,7 +70,25 @@ export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string)
 
   const refresh = useCallback(() => forceUpdate(n => n + 1), [])
 
-  const persons = store.searchPersons(query)
+  // Filter out persons that are the secondary entry in a same_person_link.
+  // When two pubkeys are linked, we show the one that was added locally
+  // (authored by the current session) and hide the remote duplicate.
+  const allLinks = getAllSamePersonLinks()
+  const hiddenByLink = new Set<string>()
+  for (const link of allLinks) {
+    // Determine which pubkey to hide — prefer to keep the one whose claims
+    // are authored by this session's own npub
+    const claimsA = store.getClaimsForPerson(link.pubkeyA)
+    const claimsB = store.getClaimsForPerson(link.pubkeyB)
+    const sessionNpub = session?.npub ?? ''
+    const aIsLocal = claimsA.some(c => c.claimantPubkey === sessionNpub)
+    const bIsLocal = claimsB.some(c => c.claimantPubkey === sessionNpub)
+    if (aIsLocal && !bIsLocal) hiddenByLink.add(link.pubkeyB)
+    else if (bIsLocal && !aIsLocal) hiddenByLink.add(link.pubkeyA)
+    else hiddenByLink.add(link.pubkeyB)  // arbitrary tiebreak
+  }
+
+  const persons = store.searchPersons(query).filter(p => !hiddenByLink.has(p.pubkey))
   const selectedPerson = selectedPubkey ? store.getPerson(selectedPubkey) : null
   const selectedClaims = selectedPubkey ? store.getClaimsForPerson(selectedPubkey) : []
   const selectedEndorsements = selectedClaims.flatMap(c =>

@@ -191,11 +191,13 @@ describe('buildRelationshipClaim', () => {
       claimantNpub: alice.npub,
       claimantNsec: alice.nsec,
       subjectNpub: ancestor.npub,
+      relatedNpub: alice.npub,
       relationship: 'grandchild',
       relayUrl: 'wss://relay.example',
     })
     assertBaseEvent(event, EventKind.RELATIONSHIP_CLAIM)
     expect(getTag(event, 'subject')).toBe(ancestor.npub)
+    expect(getTag(event, 'related')).toBe(alice.npub)
     expect(getTag(event, 'relationship')).toBe('grandchild')
     expect(getTag(event, 'relay')).toBe('wss://relay.example')
     expect(getTag(event, 'sensitive')).toBe('false')
@@ -206,6 +208,7 @@ describe('buildRelationshipClaim', () => {
       claimantNpub: alice.npub,
       claimantNsec: alice.nsec,
       subjectNpub: ancestor.npub,
+      relatedNpub: alice.npub,
       relationship: 'child',
       sensitive: true,
       sensitiveSubtype: 'adopted',

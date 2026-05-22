@@ -140,6 +140,8 @@ export interface RelationshipClaimParams {
   claimantNpub: string
   claimantNsec: string
   subjectNpub: string
+  /** The other person in the relationship — stored as 'related' tag in the event */
+  relatedNpub: string
   relationship: RelationshipType
   relayUrl?: string
   sensitive?: boolean
@@ -150,6 +152,7 @@ export interface RelationshipClaimParams {
 export function buildRelationshipClaim(params: RelationshipClaimParams): ChronicleEvent {
   const tags: string[][] = [
     ['subject', params.subjectNpub],
+    ['related', params.relatedNpub],   // the other person in the relationship
     ['relationship', params.relationship],
     ['sensitive', params.sensitive ? 'true' : 'false'],
   ]

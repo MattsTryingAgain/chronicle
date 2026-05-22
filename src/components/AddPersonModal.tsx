@@ -304,9 +304,16 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
 
         const makeId = (subjPubkey: string, rel: RelationshipType): string => {
           if (session?.nsec) {
+            // subjPubkey is the subject, the other person is determined by context:
+            // forward = person.pubkey (subject) → row.relatedPubkey (related)
+            // inverse = row.relatedPubkey (subject) → person.pubkey (related)
+            const relatedFor = subjPubkey === person.pubkey
+              ? row.relatedPubkey
+              : person.pubkey
             const ev = buildRelationshipClaim({
               claimantNpub: claimantPubkey, claimantNsec: session.nsec,
-              subjectNpub: subjPubkey, relationship: rel, sensitive: false,
+              subjectNpub: subjPubkey, relatedNpub: relatedFor,
+              relationship: rel, sensitive: false,
             })
             publishEvent(ev)
             return ev.id
