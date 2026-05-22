@@ -1190,3 +1190,32 @@ Fixes:
 Instance 2's own npub is not in instance 1's relationship graph. Setting graphRoot = session.npub on a fresh instance that has only synced remote data will always produce an empty tree. Always check `getAllRelationships()` for the npub first; fall back to the first connected person if needed.
 
 **Tests: 655/655. TypeScript clean. Build clean.**
+
+### Remove authors filter from subscription — subscribe to all Chronicle kinds (v1.0.83)
+
+**Root cause identified:** `startSync` and `fetchOnConnect` were building subscription filters with `authors: [hex1, hex2, ...]` collected once at connection time. This created two failure modes:
+
+1. **Live updates not received:** If the filter was sent before a contact's ancestors were known locally, those ancestors' pubkeys were absent from the filter. Events published by them later (e.g. a new born year) were never delivered by the relay to the subscription — the relay only fans out events matching the active subscription filter.
+
+2. **Repair events not received:** After "Repair missing tree connections", the repaired relationship events were published by instance 1 to instance 2's relay. Instance 2's relay accepted them (allowlist check passed). But instance 2's subscription filter had `authors` limited to known-at-connection-time pubkeys — if the ancestor pubkeys weren't in that list, the fan-out was silently dropped.
+
+**Fix (`src/lib/relaySync.ts`):**
+- `startSync`: replaced `{ kinds, authors, limit }` filter with `{ kinds, limit }` — no authors restriction.
+- `fetchOnConnect`: same change; removed the early-return guard that skipped subscription when `knownPubkeys.length === 0`.
+- Removed `collectKnownPubkeys`, `getContactPubkeys`/`setContactPubkeysProvider` (now dead), and the inline `npubToHex` helper (all unused).
+- `setContactPubkeysProvider` kept as a no-op export for API compatibility (called from AppContext).
+
+**Why this is safe:** The embedded relay is allowlist-gated — only pubkeys explicitly added via `allowlistAdd` can write events. Subscribing to all Chronicle kinds without an authors filter simply means "give me everything this relay has accepted from trusted sources", which is exactly what we want. There is no exposure of untrusted data.
+
+**Also in this version (carried from v1.0.82):**
+- `ingestRelationshipClaim` creates person stubs for both `subject` and `related` if they don't exist.
+- `graphRoot` falls back to the first connected person when the session npub has no relationships.
+- `useEffect` on `syncVersion` updates `graphRoot` reactively after sync.
+
+**Tests updated:** `relaySync.test.ts` — 3 tests updated to reflect no-authors-filter behaviour.
+
+**Tests: 655/655. TypeScript clean. Build clean.**
+
+### Gotcha #51 — Never filter relay subscriptions by authors
+
+The relay subscription filter must not include an `authors` list. The filter is static (sent once at REQ time); any pubkey not in the list at that moment is permanently invisible for that subscription session. Since the relay is allowlist-gated, all stored events are already trusted — subscribe to kinds only and let the allowlist do the access control.

@@ -228,7 +228,7 @@ function ingestIdentityAnchor(event: ChronicleEvent): void {
 
   const person: Person = {
     pubkey: event.pubkey,
-    displayName: event.pubkey.slice(0, 8) + '…', // placeholder until fact claim arrives
+    displayName: 'Unknown', // placeholder until name fact claim arrives
     isLiving: false,
     createdAt: event.created_at,
   }
@@ -263,7 +263,7 @@ function ingestFactClaim(event: ChronicleEvent): void {
   if (!store.getPerson(subject)) {
     store.upsertPerson({
       pubkey: subject,
-      displayName: subject.slice(0, 8) + '…',
+      displayName: 'Unknown',
       isLiving: false,
       createdAt: event.created_at,
     })
@@ -462,6 +462,34 @@ function getTag(event: ChronicleEvent, name: string): string | null {
  * on session start so requests that arrived before the handler was set are
  * not missed.
  */
+/**
+ * Re-processes all stored raw fact claim events to backfill person display names.
+ * Called once after session restore to fix stubs whose name claims were stored
+ * before the person stub existed (or whose displayName is still 'Unknown').
+ *
+ * Safe to call multiple times — claims are deduplicated in the store.
+ */
+export function replayStoredFactClaims(): void {
+  const rawEvents = store.getAllRawEvents()
+  let updated = 0
+  for (const event of rawEvents) {
+    if (event.kind !== EventKind.FACT_CLAIM) continue
+    const field = event.tags?.find((t: string[]) => t[0] === 'field')?.[1]
+    const subject = event.tags?.find((t: string[]) => t[0] === 'subject')?.[1]
+    const value = event.tags?.find((t: string[]) => t[0] === 'value')?.[1]
+    if (field !== 'name' || !subject || !value) continue
+    const person = store.getPerson(subject)
+    if (!person) {
+      store.upsertPerson({ pubkey: subject, displayName: value, isLiving: false, createdAt: event.created_at })
+      updated++
+    } else if (person.displayName === 'Unknown' || person.displayName.endsWith('…')) {
+      store.upsertPerson({ ...person, displayName: value })
+      updated++
+    }
+  }
+  if (updated > 0) console.log(`[replayStoredFactClaims] updated ${updated} person display names`)
+}
+
 export function replayPendingJoinRequests(): void {
   if (!onJoinRequestReceived) return
   const all = store.getAllRawEvents()

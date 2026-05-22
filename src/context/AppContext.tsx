@@ -26,7 +26,7 @@ import { generateUserKeyMaterial, importKeyMaterial, nsecToHex, npubToHex } from
 import { encryptWithPassword, decryptWithPassword } from '../lib/storage'
 import { RelayPool, type RelayStatus } from '../lib/relay'
 import { broadcastQueue } from '../lib/queue'
-import { startSync, fetchOnConnect, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, setContactPubkeysProvider, setSyncUpdateHandler } from '../lib/relaySync'
+import { startSync, fetchOnConnect, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, replayStoredFactClaims, setContactPubkeysProvider, setSyncUpdateHandler } from '../lib/relaySync'
 import { buildJoinRequestEvent, buildJoinAcceptEvent, buildRelationshipClaim } from '../lib/eventBuilder'
 import { ContactListManager, type Contact } from '../lib/contactList'
 import { MergeQueue, type SyncSession } from '../lib/syncMerge'
@@ -244,7 +244,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const ownEvents = store.getAllRawEvents()
         console.log(`[connectToRelay] connected to ${url}, pushing ${ownEvents.length} own events, fetching remote`)
         // Pull events from this relay authored by known pubkeys (including contacts)
-        fetchOnConnect(client).catch((e) => console.error('[connectToRelay] fetchOnConnect error:', e))
+        fetchOnConnect(client).then(() => replayStoredFactClaims()).catch((e) => console.error('[connectToRelay] fetchOnConnect error:', e))
         startSync(client)
         // Push our own events to this relay so the remote instance can see our tree data
         for (const event of ownEvents) {
@@ -280,7 +280,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       for (const [url] of Object.entries(poolRef.current.getStatuses())) {
         const client = poolRef.current.add(url)
         if (client.getStatus() === 'connected') {
-          fetchOnConnect(client).catch(() => {})
+          fetchOnConnect(client).then(() => replayStoredFactClaims()).catch(() => {})
         }
       }
     }
@@ -460,6 +460,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
             for (const c of restored.getAllClaims()) store.addClaim(c)
             for (const e of restored.getAllEndorsements()) store.addEndorsement(e)
             for (const ev of restored.getAllRawEvents()) store.addRawEvent(ev)
+          // Backfill display names for any person stub whose name fact claim
+          // was stored before the stub existed (shows as 'Unknown' or truncated pubkey).
+          replayStoredFactClaims()
             setHasStoredIdentity(true)
             setScreen('onboarding-unlock')
           }
@@ -532,7 +535,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setRelayStatuses({ ...pool.getStatuses() })
       if (status === 'connected' && !syncUnsubRef.current) {
         setSyncStatus('syncing')
-        fetchOnConnect(client).then(() => setSyncStatus('done')).catch(() => setSyncStatus('error'))
+        fetchOnConnect(client).then(() => { replayStoredFactClaims(); setSyncStatus('done') }).catch(() => setSyncStatus('error'))
         syncUnsubRef.current = startSync(client)
       }
     })
