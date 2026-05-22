@@ -1166,3 +1166,27 @@ Fix: `repairRelationships()` added to `AppContext`. It iterates `getAllRelations
 - `src/App.tsx`: added `repairRelationships` to ConnectTab destructuring; added "Repair missing tree connections" button below PossibleMatchesPanel.
 
 **Tests: 655/655. TypeScript clean. Build clean.**
+
+### Root cause fixes — relationship ingestion stubs + tree root isolation (v1.0.82)
+
+**Root cause 1 — `ingestRelationshipClaim` never created person stubs**
+`ingestFactClaim` created a stub for the subject if one didn't exist, and `ingestIdentityAnchor` created a stub for the event pubkey. But `ingestRelationshipClaim` called `addRelationship(rel)` without ensuring either `subject` or `related` existed as a person in the store. `traverseGraph` found the edge but `store.getPerson(pubkey)` returned null for both ends — the nodes didn't render.
+
+Fix: `ingestRelationshipClaim` now calls `ensurePersonStub()` for both `subject` and `related` before adding the relationship. Also added warn-level logging when expected tags are missing.
+
+**Root cause 2 — graphRoot was always session.npub on instance 2**
+`graphRoot` was set to `session.npub` on first graph tab click. Instance 2's session npub has no relationship edges — all relationships in the synced data are between instance 1's ancestor pubkeys. So `traverseGraph(instance2Npub)` always returned 0 nodes.
+
+Fixes:
+- Graph tab click: if `session.npub` has no relationships in the graph, walks `getAllRelationships()` and uses the first connected person as root instead.
+- New `useEffect` on `syncVersion`: after every sync that delivers new relationships, if the current `graphRoot` has no edges, automatically switches to the first connected person. This means the tree updates reactively when "Repair missing tree connections" completes — no manual tab switch needed.
+
+**Also fixed:** added `triggerDupesScan` / `repairRelationships` no-ops are already exported; `getAllRelationships` imported in `App.tsx`.
+
+**Gotcha #49 — Relationship events don't create person stubs; fact claims do**
+`ingestIdentityAnchor` and `ingestFactClaim` create person stubs. `ingestRelationshipClaim` previously did not. Since relationships can arrive before other events (especially during repair), the receiving instance must create stubs when ingesting them or the tree nodes simply won't appear.
+
+**Gotcha #50 — graphRoot must not default to session.npub if that person has no relationships**
+Instance 2's own npub is not in instance 1's relationship graph. Setting graphRoot = session.npub on a fresh instance that has only synced remote data will always produce an empty tree. Always check `getAllRelationships()` for the npub first; fall back to the first connected person if needed.
+
+**Tests: 655/655. TypeScript clean. Build clean.**

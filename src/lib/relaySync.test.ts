@@ -207,11 +207,12 @@ describe('ingestEvent', () => {
 // ─── startSync ────────────────────────────────────────────────────────────────
 
 describe('startSync', () => {
-  it('returns a cleanup function without subscribing when no pubkeys known', () => {
+  it('returns a cleanup function and always subscribes (no-pubkeys guard removed)', () => {
     const client = makeMockClient()
     const unsub = startSync(client as never)
     expect(typeof unsub).toBe('function')
-    expect(client.subscribe).not.toHaveBeenCalled()
+    // startSync now subscribes to all kinds regardless of known pubkeys
+    expect(client.subscribe).toHaveBeenCalledOnce()
   })
 
   it('subscribes to all Chronicle kinds for known pubkeys', () => {
@@ -225,7 +226,8 @@ describe('startSync', () => {
     const [filters] = client.subscribe.mock.calls[0]
     expect(filters[0].kinds).toContain(EventKind.IDENTITY_ANCHOR)
     expect(filters[0].kinds).toContain(EventKind.FACT_CLAIM)
-    expect(filters[0].authors).toContain(pubkey)
+    // No authors filter — relay is allowlist-gated, subscribe to all kinds
+    expect(filters[0].authors).toBeUndefined()
   })
 
   it('ingests events received via subscription', () => {
@@ -258,11 +260,20 @@ describe('startSync', () => {
 // ─── fetchOnConnect ───────────────────────────────────────────────────────────
 
 describe('fetchOnConnect', () => {
-  it('resolves immediately with zero counts when no pubkeys known', async () => {
+  it('subscribes to all Chronicle kinds (no authors filter) and resolves via timeout', async () => {
+    vi.useFakeTimers()
     const client = makeMockClient()
-    const result = await fetchOnConnect(client as never)
-    expect(result).toEqual<SyncResult>({ received: 0, ingested: 0, errors: 0 })
-    expect(client.subscribe).not.toHaveBeenCalled()
+    const promise = fetchOnConnect(client as never)
+    // fetchOnConnect always subscribes now regardless of known pubkeys
+    expect(client.subscribe).toHaveBeenCalledOnce()
+    const [filters] = client.subscribe.mock.calls[0]
+    expect(filters[0].authors).toBeUndefined()
+    expect(filters[0].kinds).toContain(EventKind.FACT_CLAIM)
+    // Let the 10s timeout fire
+    vi.advanceTimersByTime(11_000)
+    const result = await promise
+    expect(result.received).toBe(0)
+    vi.useRealTimers()
   })
 
   it('counts received and ingested events', async () => {

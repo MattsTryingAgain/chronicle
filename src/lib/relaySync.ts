@@ -49,13 +49,9 @@ export const AUTO_DEDUP_THRESHOLD = 0.35
 let onJoinRequestReceived: JoinRequestHandler | null = null
 let onJoinAcceptReceived:  JoinAcceptHandler  | null = null
 
-// Contact pubkeys provider — AppContext sets this so relaySync can include
-// contact pubkeys in subscription filters without importing AppContext.
-let getContactPubkeys: (() => string[]) | null = null
-
-export function setContactPubkeysProvider(fn: () => string[]): void {
-  getContactPubkeys = fn
-}
+// setContactPubkeysProvider kept for API compatibility — no longer used
+// (subscription now fetches all kinds without an authors filter)
+export function setContactPubkeysProvider(_fn: () => string[]): void {}
 
 export function setJoinRequestHandler(fn: JoinRequestHandler): void {
   onJoinRequestReceived = fn
@@ -88,17 +84,14 @@ export interface SyncResult {
  * Returns a cleanup function that cancels the subscription.
  */
 export function startSync(client: RelayClient): () => void {
-  const knownPubkeys = collectKnownPubkeys()
-
-  if (knownPubkeys.length === 0) {
-    // No known pubkeys yet — nothing to fetch
-    return () => {}
-  }
-
+  // Subscribe to all Chronicle kinds from this relay — no authors filter.
+  // The relay is allowlist-gated so every event stored there is already
+  // from a trusted pubkey. Filtering by authors here creates a race
+  // condition: the filter is built once at connection time, so events
+  // published by newly-discovered ancestor pubkeys are missed.
   const filters = [
     {
       kinds: ALL_CHRONICLE_KINDS,
-      authors: knownPubkeys,
       limit: 500,
     },
   ]
@@ -119,19 +112,13 @@ export function startSync(client: RelayClient): () => void {
  */
 export function fetchOnConnect(client: RelayClient): Promise<SyncResult> {
   return new Promise((resolve) => {
-    const knownPubkeys = collectKnownPubkeys()
-
     const result: SyncResult = { received: 0, ingested: 0, errors: 0 }
 
-    if (knownPubkeys.length === 0) {
-      resolve(result)
-      return
-    }
-
+    // No authors filter — relay is allowlist-gated, subscribe to all kinds.
+    // See startSync for rationale.
     const filters = [
       {
         kinds: ALL_CHRONICLE_KINDS,
-        authors: knownPubkeys,
         limit: 500,
       },
     ]
@@ -466,91 +453,9 @@ function getTag(event: ChronicleEvent, name: string): string | null {
 }
 
 /**
- * Collect all hex pubkeys Chronicle should fetch events for:
- * - The user's own identity
- * - All persons already stored locally (ancestor pubkeys)
- * - Recovery contacts
- *
- * Returns hex pubkeys. The store uses npub bech32 internally, so we
- * need to decode them. We call the bech32 decoder only if npub-format.
- */
-function collectKnownPubkeys(): string[] {
-  const pubkeys = new Set<string>()
-
-  // Own identity
-  const identity = store.getIdentity()
-  if (identity?.npub) {
-    const hex = npubToHex(identity.npub)
-    if (hex) pubkeys.add(hex)
-  }
-
-  // All locally stored persons
-  for (const person of store.getAllPersons()) {
-    const hex = npubToHex(person.pubkey)
-    if (hex) pubkeys.add(hex)
-    // person.pubkey might already be hex if stored that way
-    else if (person.pubkey.length === 64) pubkeys.add(person.pubkey)
-  }
-
-  // Recovery contacts
-  for (const contact of store.getRecoveryContacts()) {
-    const hex = npubToHex(contact.pubkey)
-    if (hex) pubkeys.add(hex)
-    else if (contact.pubkey.length === 64) pubkeys.add(contact.pubkey)
-  }
-
-  // Connected family members (from contact list)
-  // Their pubkeys are npub1... format — convert to hex for the filter
-  if (getContactPubkeys) {
-    for (const npub of getContactPubkeys()) {
-      const hex = npubToHex(npub)
-      if (hex) pubkeys.add(hex)
-      else if (npub.length === 64) pubkeys.add(npub)
-    }
-  }
-
-  return [...pubkeys]
-}
-
-/**
  * Decode npub1... bech32 to 64-char hex.
  * Returns null if input is not a valid npub.
  */
-function npubToHex(npub: string): string | null {
-  if (!npub.startsWith('npub1')) {
-    // Already hex or unknown format
-    return npub.length === 64 ? npub : null
-  }
-  try {
-    // bech32 decode — we replicate the minimal decode here to avoid
-    // importing keys.ts (and its heavy crypto deps) into this module.
-    const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
-    const data = npub.slice(5) // strip 'npub1'
-    const decoded: number[] = []
-    for (const char of data) {
-      const val = CHARSET.indexOf(char)
-      if (val === -1) return null
-      decoded.push(val)
-    }
-    // Convert from 5-bit groups to 8-bit bytes (strip checksum — last 6 chars)
-    const words = decoded.slice(0, decoded.length - 6)
-    const bytes: number[] = []
-    let acc = 0, bits = 0
-    for (const word of words) {
-      acc = (acc << 5) | word
-      bits += 5
-      if (bits >= 8) {
-        bits -= 8
-        bytes.push((acc >> bits) & 0xff)
-      }
-    }
-    if (bytes.length !== 32) return null
-    return bytes.map((b) => b.toString(16).padStart(2, '0')).join('')
-  } catch {
-    return null
-  }
-}
-
 /**
  * Scan raw event store for any JOIN_REQUEST events that haven't been processed
  * yet and fire the handler for each. Call this after registering the handler
