@@ -1,13 +1,16 @@
 /**
  * PossibleMatchesPanel
  *
- * Shown in the Connect tab after sync completes. Compares all persons in the
- * local store and surfaces pairs that are likely the same real person (added
- * independently by different users with different pubkeys).
+ * Surfaces pairs of persons that are likely the same real individual — added
+ * independently by different users (or in different app instances) with
+ * different pubkeys.
+ *
+ * Appears in the Connect tab. Also re-triggers automatically whenever
+ * relaySync detects a new potential duplicate during event ingestion.
  *
  * Confirming a match publishes a kind-30083 same_person_link event, which
- * causes the tree view to treat both pubkeys as one person going forward.
- * Dismissing records the decision so the pair is not suggested again.
+ * causes both the People list and the Family Tree to collapse the two entries
+ * into one. Dismissing records the decision so the pair is not re-suggested.
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -20,7 +23,7 @@ import { useApp } from '../context/AppContext'
 import type { MatchCandidate } from '../lib/treeLinking'
 import type { SamePersonLink } from '../lib/graph'
 
-// ─── Dismissed pairs (persisted to localStorage so they survive refreshes) ───
+// ─── Dismissed pairs (persisted so they survive refreshes) ────────────────────
 
 const DISMISSED_KEY = 'chronicle:dismissed-matches'
 
@@ -40,85 +43,71 @@ function pairKey(a: string, b: string): string {
   return [a, b].sort().join('|')
 }
 
+// ─── Matching logic ───────────────────────────────────────────────────────────
+
+/**
+ * Re-scans the full person store for duplicate candidates.
+ *
+ * We compare EVERY pair — not just mine-vs-theirs — because in the two-instance
+ * scenario both persons end up in the same local store. The mine/theirs split
+ * only works when there's a clean claimant boundary, which breaks when one
+ * instance has synced all data locally.
+ */
+function computeCandidates(dismissed: Set<string>): MatchCandidate[] {
+  const allPersons = store.getAllPersons()
+  if (allPersons.length < 2) return []
+
+  const allClaims   = store.getAllClaims()
+  const existingLinks = getAllSamePersonLinks()
+  const pubkeys = allPersons.map(p => p.pubkey)
+
+  // findMatchCandidates compares setA × setB; passing the same set for both
+  // gives us all cross-pair comparisons (same-pubkey pairs are skipped inside).
+  const raw = findMatchCandidates(pubkeys, pubkeys, allClaims, { minConfidence: 0.3 })
+
+  const seen = new Set<string>()
+  return raw.filter(c => {
+    if (c.pubkeyA === c.pubkeyB) return false
+    const key = pairKey(c.pubkeyA, c.pubkeyB)
+    if (seen.has(key)) return false
+    seen.add(key)
+    if (alreadyLinked(c.pubkeyA, c.pubkeyB, existingLinks)) return false
+    if (dismissed.has(key)) return false
+    return true
+  })
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface PossibleMatchesPanelProps {
-  syncVersion: number   // re-run matching when new sync data arrives
+  /** Re-run matching when syncVersion bumps (remote sync) */
+  syncVersion: number
+  /** Re-run matching when pendingMatchVersion bumps (auto-detected on ingest) */
+  pendingMatchVersion: number
 }
 
-export function PossibleMatchesPanel({ syncVersion }: PossibleMatchesPanelProps) {
-  const { session, publishEvent, contacts } = useApp()
+export function PossibleMatchesPanel({ syncVersion, pendingMatchVersion }: PossibleMatchesPanelProps) {
+  const { session, publishEvent } = useApp()
   const [candidates, setCandidates] = useState<MatchCandidate[]>([])
   const [dismissed, setDismissed] = useState<Set<string>>(loadDismissed)
   const [confirming, setConfirming] = useState<string | null>(null)
 
-  // Re-run matching whenever sync delivers new data or dismissed set changes
+  // Re-run whenever sync or ingest detects new data, or dismissed set changes
   useEffect(() => {
-    const allPersons = store.getAllPersons()
-    if (allPersons.length < 2) { setCandidates([]); return }
-
-    const allClaims     = store.getAllClaims()
-    const existingLinks = getAllSamePersonLinks()
-
-    // Split persons into "mine" vs "theirs".
-    // "Mine" = persons whose claims are authored by this session's own npub.
-    // "Theirs" = persons whose claims are authored by a contact's npub.
-    // We compare mine vs theirs only — never mine vs mine or theirs vs theirs —
-    // to avoid flagging two different people in the same tree as potential dupes.
-    const myNpub = session?.npub ?? ''
-    const contactNpubs = new Set(contacts.map(c => c.npub))
-
-    const myPubkeys  = new Set<string>()
-    const theirPubkeys = new Set<string>()
-
-    for (const claim of allClaims) {
-      if (claim.claimantPubkey === myNpub) {
-        myPubkeys.add(claim.subjectPubkey)
-      } else if (contactNpubs.has(claim.claimantPubkey)) {
-        theirPubkeys.add(claim.subjectPubkey)
-      }
-    }
-
-    // If the split doesn't produce two distinct sets, skip — nothing to compare
-    if (myPubkeys.size === 0 || theirPubkeys.size === 0) {
-      setCandidates([])
-      return
-    }
-
-    const setA = [...myPubkeys]
-    const setB = [...theirPubkeys]
-
-    // Lower threshold: exact name match scores 0.35, which is enough signal
-    const raw = findMatchCandidates(setA, setB, allClaims, { minConfidence: 0.3 })
-
-    // Filter out already-linked, dismissed, and same-pubkey pairs
-    const seen = new Set<string>()
-    const filtered = raw.filter(c => {
-      if (c.pubkeyA === c.pubkeyB) return false
-      const key = pairKey(c.pubkeyA, c.pubkeyB)
-      if (seen.has(key)) return false
-      seen.add(key)
-      if (alreadyLinked(c.pubkeyA, c.pubkeyB, existingLinks)) return false
-      if (dismissed.has(key)) return false
-      return true
-    })
-
-    setCandidates(filtered)
-  }, [syncVersion, dismissed, contacts])
+    setCandidates(computeCandidates(dismissed))
+  }, [syncVersion, pendingMatchVersion, dismissed])
 
   const handleConfirm = useCallback(async (candidate: MatchCandidate) => {
     if (!session) return
     setConfirming(pairKey(candidate.pubkeyA, candidate.pubkeyB))
 
     try {
-      // Publish the same-person link event
       const event = buildSamePersonLink(
         session.npub, session.nsec,
         candidate.pubkeyA, candidate.pubkeyB,
       )
       publishEvent(event)
 
-      // Add to local graph immediately (don't wait for relay round-trip)
       const link: SamePersonLink = {
         eventId: event.id,
         pubkeyA: candidate.pubkeyA,
@@ -129,7 +118,6 @@ export function PossibleMatchesPanel({ syncVersion }: PossibleMatchesPanelProps)
       }
       addSamePersonLink(link)
 
-      // Remove from candidates
       setCandidates(prev => prev.filter(c =>
         pairKey(c.pubkeyA, c.pubkeyB) !== pairKey(candidate.pubkeyA, candidate.pubkeyB)
       ))
@@ -155,8 +143,8 @@ export function PossibleMatchesPanel({ syncVersion }: PossibleMatchesPanelProps)
       </h2>
       <p style={{ fontSize: 13, color: 'var(--ink-muted)', marginBottom: 12 }}>
         These pairs of people may be the same person, added independently by
-        different family members. Confirm to link them — they'll appear as one
-        person in the tree.
+        different family members. Confirm to merge them — they'll appear as one
+        person in the tree and People list.
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {candidates.map(candidate => (
@@ -242,7 +230,7 @@ function MatchCard({ candidate, confirming, onConfirm, onDismiss }: MatchCardPro
             onClick={onConfirm}
             disabled={confirming}
           >
-            {confirming ? 'Linking…' : 'Yes, same person'}
+            {confirming ? 'Merging…' : 'Yes, same person'}
           </button>
         </div>
       </div>

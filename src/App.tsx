@@ -21,6 +21,7 @@ import { AboutView } from './components/AboutView'
 import { NewVersionBanner } from './components/NewVersionBanner'
 import { useState, useEffect } from 'react'
 import { schemaVersionChecker } from './lib/schemaVersion'
+import { setPendingMatchHandler } from './lib/relaySync'
 import './chronicle.css'
 
 type Tab = 'tree' | 'graph' | 'connect' | 'settings' | 'about'
@@ -53,6 +54,14 @@ function ConnectTab() {
 
   const [showInvite, setShowInvite] = useState(false)
   const [revocationTarget, setRevocationTarget] = useState<{ npub: string; name: string } | null>(null)
+  const [pendingMatchVersion, setPendingMatchVersion] = useState(0)
+
+  // Register with relaySync so auto-detected duplicates bump pendingMatchVersion,
+  // causing PossibleMatchesPanel to re-scan immediately on ingest.
+  useEffect(() => {
+    setPendingMatchHandler(() => setPendingMatchVersion(v => v + 1))
+    return () => setPendingMatchHandler(() => {})
+  }, [])
 
   if (!session) return null
 
@@ -73,9 +82,7 @@ function ConnectTab() {
 
       <ContactListView contacts={contacts} onRemove={removeContact} />
 
-      {contacts.length > 0 && (
-        <PossibleMatchesPanel syncVersion={syncVersion} />
-      )}
+      <PossibleMatchesPanel syncVersion={syncVersion} pendingMatchVersion={pendingMatchVersion} />
 
       {contacts.length > 0 && (
         <div className="mt-3">

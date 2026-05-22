@@ -7,7 +7,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { store } from '../lib/storage'
-import { getAllSamePersonLinks } from '../lib/graph'
+import { getAllSamePersonLinks, resolveCanonicalPubkey } from '../lib/graph'
 import { ProfileCard } from './ProfileCard'
 import { AddPersonModal } from './AddPersonModal'
 import { useApp } from '../context/AppContext'
@@ -70,22 +70,17 @@ export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string)
 
   const refresh = useCallback(() => forceUpdate(n => n + 1), [])
 
-  // Filter out persons that are the secondary entry in a same_person_link.
-  // When two pubkeys are linked, we show the one that was added locally
-  // (authored by the current session) and hide the remote duplicate.
+  // Filter out persons that are the non-canonical entry in a same_person_link.
+  // resolveCanonicalPubkey follows the link chain and returns the canonical end;
+  // any person whose pubkey != canonical(pubkey) is a secondary duplicate.
+  // This is deterministic regardless of which instance created which record.
   const allLinks = getAllSamePersonLinks()
   const hiddenByLink = new Set<string>()
-  for (const link of allLinks) {
-    // Determine which pubkey to hide — prefer to keep the one whose claims
-    // are authored by this session's own npub
-    const claimsA = store.getClaimsForPerson(link.pubkeyA)
-    const claimsB = store.getClaimsForPerson(link.pubkeyB)
-    const sessionNpub = session?.npub ?? ''
-    const aIsLocal = claimsA.some(c => c.claimantPubkey === sessionNpub)
-    const bIsLocal = claimsB.some(c => c.claimantPubkey === sessionNpub)
-    if (aIsLocal && !bIsLocal) hiddenByLink.add(link.pubkeyB)
-    else if (bIsLocal && !aIsLocal) hiddenByLink.add(link.pubkeyA)
-    else hiddenByLink.add(link.pubkeyB)  // arbitrary tiebreak
+  if (allLinks.length > 0) {
+    for (const p of store.getAllPersons()) {
+      const canonical = resolveCanonicalPubkey(p.pubkey)
+      if (canonical !== p.pubkey) hiddenByLink.add(p.pubkey)
+    }
   }
 
   const persons = store.searchPersons(query).filter(p => !hiddenByLink.has(p.pubkey))

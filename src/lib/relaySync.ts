@@ -19,11 +19,13 @@ import {
   addRelationship,
   addAcknowledgement,
   addSamePersonLink,
+  getAllSamePersonLinks,
 } from './graph'
 import type { RelationshipClaim, Acknowledgement, SamePersonLink } from './graph'
 import { schemaVersionChecker } from './schemaVersion'
 import { parseJoinRequest, parseJoinAccept } from './joinRequest'
 import type { JoinRequest, JoinAccept } from './joinRequest'
+import { scoreMatch, alreadyLinked } from './treeLinking'
 
 // ── Join request callbacks ────────────────────────────────────────────────────
 // AppContext registers these so the UI can react to incoming handshake events
@@ -35,6 +37,14 @@ type JoinAcceptHandler  = (accept: JoinAccept) => void
 // Called after batches of events are ingested so the UI can re-render
 let onSyncUpdate: (() => void) | null = null
 export function setSyncUpdateHandler(fn: () => void): void { onSyncUpdate = fn }
+
+// Called whenever a new high-confidence duplicate pair is detected during ingest.
+let onPendingMatchFound: (() => void) | null = null
+export function setPendingMatchHandler(fn: () => void): void { onPendingMatchFound = fn }
+
+// Minimum confidence to surface an automatic dedup suggestion.
+// 0.35 = exact name only. 0.60 = name + birth year (much stronger signal).
+export const AUTO_DEDUP_THRESHOLD = 0.35
 
 let onJoinRequestReceived: JoinRequestHandler | null = null
 let onJoinAcceptReceived:  JoinAcceptHandler  | null = null
@@ -279,6 +289,41 @@ function ingestFactClaim(event: ChronicleEvent): void {
     const person = store.getPerson(subject)
     if (person) {
       store.upsertPerson({ ...person, displayName: value })
+    }
+  }
+
+  // After any name or birth fact, scan for possible duplicates in the store.
+  // This catches the common case where instance 1 has "Alice, b.1980" and
+  // instance 2 syncs in "Alice" with no DoB — the name hit alone is enough
+  // to surface a suggestion. Only fires when there's something to compare.
+  if (field === 'name' || field === 'born') {
+    maybeDetectDuplicate(subject)
+  }
+}
+
+/**
+ * Scans all existing persons for a potential duplicate of `subjectPubkey`.
+ * If a high-confidence pair is found that isn't already linked or dismissed,
+ * fires `onPendingMatchFound` so the UI can surface it for user review.
+ *
+ * Runs synchronously but is O(n) in number of persons — fine up to ~1,000.
+ */
+function maybeDetectDuplicate(subjectPubkey: string): void {
+  if (!onPendingMatchFound) return
+  const allPersons = store.getAllPersons()
+  if (allPersons.length < 2) return
+  const allClaims = store.getAllClaims()
+  const existingLinks = getAllSamePersonLinks()
+
+  for (const other of allPersons) {
+    if (other.pubkey === subjectPubkey) continue
+    if (alreadyLinked(subjectPubkey, other.pubkey, existingLinks)) continue
+    const candidate = scoreMatch(subjectPubkey, other.pubkey, allClaims)
+    if (candidate.confidence >= AUTO_DEDUP_THRESHOLD) {
+      // At least one unlinked pair qualifies — notify the UI and stop scanning.
+      // The UI will re-run the full scan itself.
+      onPendingMatchFound()
+      return
     }
   }
 }
