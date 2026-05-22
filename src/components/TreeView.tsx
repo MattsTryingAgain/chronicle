@@ -7,10 +7,11 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { store } from '../lib/storage'
-import { getAllSamePersonLinks, resolveCanonicalPubkey } from '../lib/graph'
+import { getAllSamePersonLinks, resolveCanonicalPubkey, addSamePersonLink } from '../lib/graph'
 import { ProfileCard } from './ProfileCard'
 import { AddPersonModal } from './AddPersonModal'
 import { useApp } from '../context/AppContext'
+import { buildSamePersonLink } from '../lib/eventBuilder'
 import type { Person } from '../types/chronicle'
 
 function SearchIcon() {
@@ -57,13 +58,13 @@ function PersonListItem({ person, onClick }: { person: Person; onClick: () => vo
 
 export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string) => void } = {}) {
   const { t } = useTranslation()
-  const { session, deletePerson } = useApp()
+  const { session, deletePerson, syncVersion, publishEvent } = useApp()
   const [query, setQuery] = useState('')
   const [selectedPubkey, setSelectedPubkey] = useState<string | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingPubkey, setEditingPubkey] = useState<string | null>(null)
   const [, forceUpdate] = useState(0)
-  const { syncVersion } = useApp()
+  const [linkPickerFor, setLinkPickerFor] = useState<string | null>(null)
 
   // Re-render whenever remote sync delivers new data
   useEffect(() => { forceUpdate(n => n + 1) }, [syncVersion])
@@ -133,6 +134,67 @@ export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string)
               </button>
             </div>
           )}
+
+          {/* Manual same-person linking */}
+          <div className="mt-3">
+            {linkPickerFor === selectedPubkey ? (
+              <div>
+                <p style={{ fontSize: 13, color: 'var(--ink-muted)', marginBottom: 8 }}>
+                  Select the duplicate entry to merge with <strong>{selectedPerson?.displayName}</strong>:
+                </p>
+                <div className="person-list" style={{ maxHeight: 240, overflowY: 'auto' }}>
+                  {store.getAllPersons()
+                    .filter(p => p.pubkey !== selectedPubkey && resolveCanonicalPubkey(p.pubkey) === p.pubkey)
+                    .map(p => (
+                      <div
+                        key={p.pubkey}
+                        className="person-list-item"
+                        style={{ cursor: 'pointer', padding: '8px 12px' }}
+                        onClick={() => {
+                          if (!session) return
+                          const event = buildSamePersonLink(
+                            session.npub, session.nsec,
+                            selectedPubkey!, p.pubkey,
+                          )
+                          publishEvent(event)
+                          addSamePersonLink({
+                            eventId: event.id,
+                            pubkeyA: selectedPubkey!,
+                            pubkeyB: p.pubkey,
+                            claimantPubkey: session.npub,
+                            createdAt: event.created_at,
+                            retracted: false,
+                          })
+                          setLinkPickerFor(null)
+                          setSelectedPubkey(null)
+                          refresh()
+                        }}
+                      >
+                        <strong>{p.displayName}</strong>
+                        <span style={{ fontSize: 12, color: 'var(--ink-muted)', marginLeft: 8 }}>
+                          {store.getClaimsForPerson(p.pubkey).find(c => c.field === 'born')?.value ?? ''}
+                        </span>
+                      </div>
+                    ))
+                  }
+                </div>
+                <button
+                  className="btn btn-ghost btn-sm mt-2"
+                  onClick={() => setLinkPickerFor(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ color: 'var(--ink-muted)', fontSize: 12 }}
+                onClick={() => setLinkPickerFor(selectedPubkey)}
+              >
+                This is the same person as someone else in the list…
+              </button>
+            )}
+          </div>
         </div>
       ) : (
         <>

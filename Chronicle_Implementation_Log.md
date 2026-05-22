@@ -1091,3 +1091,52 @@ Linux:
 - `src/context/AppContext.tsx`: `LOCAL_RELAY_URL` now reads `relayPort` from the preload (falls back to 4869 in browser dev mode); allowlist HTTP call also uses the dynamic port
 
 **Tests:** 637/637 passing. TypeScript clean. Build clean.
+
+### Deduplication overhaul — auto-detect + deterministic merge (v1.0.80)
+
+**Problem reported:** When instance 1 has "Matt O'Brien, b.1980" and instance 2 syncs in "Matt O'Brien" (no DoB), the two entries were never surfaced as duplicates. The existing `PossibleMatchesPanel` used a mine/theirs split (local vs remote claimant) that broke once both records landed in the same local store — which always happens in the two-instance scenario.
+
+**Root causes:**
+1. `PossibleMatchesPanel` split persons into "mine" vs "theirs" by claimant pubkey, then only compared across the boundary. After sync, both records exist locally and may share the same claimant (session) pubkey — the split produced zero candidates.
+2. `TreeView` hid duplicates by checking `aIsLocal`/`bIsLocal` — also claimant-based, also broken in the same scenario.
+3. No auto-detection: duplicates were only surfaced if the user navigated to the Connect tab after sync was complete.
+
+**Fix — three-layer change:**
+
+**1. `src/lib/relaySync.ts`**
+- Added `setPendingMatchHandler(fn)` export and `AUTO_DEDUP_THRESHOLD = 0.35` constant.
+- Added `maybeDetectDuplicate(subjectPubkey)` — called after every `ingestFactClaim` when the `name` or `born` field arrives. Scans all existing persons, computes `scoreMatch`, and fires the registered callback if any unlinked pair meets the threshold.
+- This means duplicates are surfaced immediately on ingest, not only after a manual UI action.
+- Added `getAllSamePersonLinks` and `scoreMatch`/`alreadyLinked` imports.
+
+**2. `src/components/PossibleMatchesPanel.tsx`** — rewritten
+- New prop: `pendingMatchVersion: number` (bumped by App.tsx whenever relaySync fires the handler).
+- `computeCandidates()` now compares **all persons against all persons** (same pubkey array passed as both setA and setB to `findMatchCandidates`). The mine/theirs split is removed.
+- Removed the `contacts.length > 0` guard in `App.tsx` — panel now shows even before any contacts are added (covers same-session local deduplication).
+- "Yes, same person" button label changed to "Merging…" to reflect that confirming immediately collapses both entries.
+
+**3. `src/components/TreeView.tsx`**
+- Replaced the `aIsLocal`/`bIsLocal` claimant-based hiding logic with `resolveCanonicalPubkey` (already in `graph.ts`). Any person whose pubkey != `resolveCanonicalPubkey(pubkey)` is non-canonical and hidden.
+- This is deterministic regardless of which instance created which record — canonical is always the lexicographically smaller pubkey.
+
+**4. `src/App.tsx`**
+- Registers `setPendingMatchHandler` in a `useEffect` in `ConnectTab`, bumping `pendingMatchVersion` state.
+- Passes `pendingMatchVersion` to `PossibleMatchesPanel`.
+
+**5. `src/lib/autoDedup.test.ts`** — 18 new tests
+- `scoreMatch`: name-only (0.35), similar-name (0.15), zero for different names.
+- `scoreMatch`: name+DoB (0.60), DoB outside tolerance stays at 0.35.
+- **The bug scenario**: instance 1 has name+DoB, instance 2 has name only → still ≥ 0.35 → surfaced.
+- `findMatchCandidates`: same-set comparison finds candidates; excludes linked pairs; no self-match; higher-confidence ranked first.
+- `resolveCanonicalPubkey`: no-link case; lexicographic canonical; people-list dedup with correct hidden set; chained links without infinite loop.
+- `alreadyLinked`: forward, reverse, retracted, no-match.
+
+**Tests: 655/655. TypeScript clean. Build clean.**
+
+### Gotcha #47 — PossibleMatchesPanel must compare ALL persons, not mine-vs-theirs
+
+The mine/theirs split by claimant pubkey only works when there is a clean boundary between local and remote data — which breaks the moment sync completes and both records land in the same store. Always pass the same full pubkey list as both setA and setB to `findMatchCandidates`, then filter out self-matches (already done inside the function) and already-linked pairs.
+
+### Gotcha #48 — TreeView dedup must use resolveCanonicalPubkey, not claimant heuristics
+
+Hiding non-canonical duplicates by checking which claimant is "local" is fragile. `resolveCanonicalPubkey` follows the link chain and returns a stable, deterministic result (lexicographically smallest pubkey in the link cluster). Any person whose pubkey differs from their canonical form is a secondary entry and should be hidden.

@@ -49,7 +49,7 @@ function ConnectTab() {
   const {
     session, localRelayUrl, contacts, removeContact,
     joinRequests, acceptJoinRequest, rejectJoinRequest, reportBadActor,
-    sendJoinRequest, syncVersion,
+    sendJoinRequest, syncVersion, repairRelationships,
   } = useApp()
 
   const [showInvite, setShowInvite] = useState(false)
@@ -83,6 +83,19 @@ function ConnectTab() {
       <ContactListView contacts={contacts} onRemove={removeContact} />
 
       <PossibleMatchesPanel syncVersion={syncVersion} pendingMatchVersion={pendingMatchVersion} />
+
+      {contacts.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ color: 'var(--ink-muted)', fontSize: 12 }}
+            onClick={repairRelationships}
+            title="Re-publishes all relationship events so the other instance can see them. Use this if the family tree is not showing connections after syncing."
+          >
+            ↺ Repair missing tree connections
+          </button>
+        </div>
+      )}
 
       {contacts.length > 0 && (
         <div className="mt-3">

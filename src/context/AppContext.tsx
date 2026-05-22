@@ -27,14 +27,14 @@ import { encryptWithPassword, decryptWithPassword } from '../lib/storage'
 import { RelayPool, type RelayStatus } from '../lib/relay'
 import { broadcastQueue } from '../lib/queue'
 import { startSync, fetchOnConnect, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, setContactPubkeysProvider, setSyncUpdateHandler } from '../lib/relaySync'
-import { buildJoinRequestEvent, buildJoinAcceptEvent } from '../lib/eventBuilder'
+import { buildJoinRequestEvent, buildJoinAcceptEvent, buildRelationshipClaim } from '../lib/eventBuilder'
 import { ContactListManager, type Contact } from '../lib/contactList'
 import { MergeQueue, type SyncSession } from '../lib/syncMerge'
 import { TrustRevocationStore, type TrustRevocation } from '../lib/trustRevocation'
 import { RelayTable } from '../lib/relayGossip'
 import { JoinRequestQueue, type JoinRequest } from '../lib/joinRequest'
 import { generateFamilyKey, encodeFamilyKey, admitMember } from '../lib/privacyTier'
-import { serialiseGraph, deserialiseGraph, retractRelationship, getRelationshipsFor } from '../lib/graph'
+import { serialiseGraph, deserialiseGraph, retractRelationship, getRelationshipsFor, getAllRelationships } from '../lib/graph'
 import { storageGet, storageSet } from '../lib/appStorage'
 import { keyRecoveryStore } from '../lib/keyRecovery'
 import { mediaCache, type MediaCacheEntry } from '../lib/blossom'
@@ -143,6 +143,11 @@ interface AppContextValue {
   isKeyCompromised: (npub: string) => boolean
   mediaCacheEntries: MediaCacheEntry[]
   registerMedia: (ref: import('../types/chronicle').BlossomRef) => void
+  /** Re-publishes all relationship events from the local graph with correct tags.
+   *  Fixes relationships stored before v1.0.79 that lacked the 'related' tag. */
+  repairRelationships: () => void
+  /** Immediately triggers a duplicate scan regardless of incoming events. */
+  triggerDupesScan: () => void
 }
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -703,6 +708,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setKnownRelays([LOCAL_RELAY_URL])
   }, [stopRelay])
 
+  // ── repairRelationships ────────────────────────────────────────────────────
+  // Re-publishes all locally-known relationship claims with the correct 'related'
+  // tag. Needed for events stored before v1.0.79 when that tag was missing,
+  // which caused remote instances to silently discard them on ingest.
+
+  const repairRelationships = useCallback(() => {
+    const sess = sessionRef.current
+    if (!sess) return
+    const allRels = getAllRelationships()
+    let repaired = 0
+    for (const rel of allRels) {
+      if (rel.retracted) continue
+      // Only re-publish relationships claimed by this session's own key
+      if (rel.claimantPubkey !== sess.npub) continue
+      const ev = buildRelationshipClaim({
+        claimantNpub: sess.npub,
+        claimantNsec: sess.nsec,
+        subjectNpub: rel.subjectPubkey,
+        relatedNpub: rel.relatedPubkey,
+        relationship: rel.relationship,
+        sensitive: rel.sensitive,
+      })
+      store.addRawEvent(ev)
+      broadcastQueue.enqueue(ev)
+      repaired++
+    }
+    if (poolRef.current) broadcastQueue.drain(poolRef.current)
+    console.log(`[repairRelationships] re-published ${repaired} relationship events`)
+  }, [])
+
+  // ── triggerDupesScan ────────────────────────────────────────────────────────
+
+  const triggerDupesScan = useCallback(() => {
+    // Signal via syncVersion bump — PossibleMatchesPanel watches this
+    setSyncVersion(v => v + 1)
+  }, [])
+
   // ── publishEvent ───────────────────────────────────────────────────────────
 
   const publishEvent = useCallback((event: ChronicleEvent) => {
@@ -799,6 +841,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         isKeyCompromised,
         mediaCacheEntries,
         registerMedia,
+        repairRelationships,
+        triggerDupesScan,
       }}
     >
       {children}

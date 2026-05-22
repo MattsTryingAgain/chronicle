@@ -134,7 +134,17 @@ export function PossibleMatchesPanel({ syncVersion, pendingMatchVersion }: Possi
     saveDismissed(next)
   }, [dismissed])
 
-  if (candidates.length === 0) return null
+  if (candidates.length === 0) return (
+    <div style={{ marginTop: 8 }}>
+      <button
+        className="btn btn-ghost btn-sm"
+        onClick={() => setCandidates(computeCandidates(dismissed))}
+        style={{ color: 'var(--ink-muted)', fontSize: 12 }}
+      >
+        🔍 Scan for duplicate people
+      </button>
+    </div>
+  )
 
   return (
     <div className="settings-section">
