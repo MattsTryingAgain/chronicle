@@ -471,22 +471,40 @@ function getTag(event: ChronicleEvent, name: string): string | null {
  */
 export function replayStoredFactClaims(): void {
   const rawEvents = store.getAllRawEvents()
-  let updated = 0
+
+  // Collect the best (most recent) name claim per subject pubkey
+  const bestNameBySubject = new Map<string, { value: string; createdAt: number }>()
+
   for (const event of rawEvents) {
     if (event.kind !== EventKind.FACT_CLAIM) continue
     const field = event.tags?.find((t: string[]) => t[0] === 'field')?.[1]
     const subject = event.tags?.find((t: string[]) => t[0] === 'subject')?.[1]
     const value = event.tags?.find((t: string[]) => t[0] === 'value')?.[1]
-    if (field !== 'name' || !subject || !value) continue
+    if (!subject || !value) continue
+
+    if (field === 'name') {
+      const existing = bestNameBySubject.get(subject)
+      if (!existing || event.created_at > existing.createdAt) {
+        bestNameBySubject.set(subject, { value, createdAt: event.created_at })
+      }
+    }
+  }
+
+  // Apply best name to every person — not just stubs.
+  // This covers: stubs that never had a name, AND persons whose name claim
+  // arrived before the stub and was deduplicated on subsequent syncs.
+  let updated = 0
+  for (const [subject, { value }] of bestNameBySubject) {
     const person = store.getPerson(subject)
     if (!person) {
-      store.upsertPerson({ pubkey: subject, displayName: value, isLiving: false, createdAt: event.created_at })
+      store.upsertPerson({ pubkey: subject, displayName: value, isLiving: false, createdAt: 0 })
       updated++
-    } else if (person.displayName === 'Unknown' || person.displayName.endsWith('…')) {
+    } else if (person.displayName !== value) {
       store.upsertPerson({ ...person, displayName: value })
       updated++
     }
   }
+
   if (updated > 0) console.log(`[replayStoredFactClaims] updated ${updated} person display names`)
 }
 

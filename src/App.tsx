@@ -45,7 +45,7 @@ function RelayDot() {
   )
 }
 
-function ConnectTab() {
+function ConnectTab({ pendingMatchVersion }: { pendingMatchVersion: number }) {
   const { t } = useTranslation()
   const {
     session, localRelayUrl, contacts, removeContact,
@@ -55,14 +55,7 @@ function ConnectTab() {
 
   const [showInvite, setShowInvite] = useState(false)
   const [revocationTarget, setRevocationTarget] = useState<{ npub: string; name: string } | null>(null)
-  const [pendingMatchVersion, setPendingMatchVersion] = useState(0)
 
-  // Register with relaySync so auto-detected duplicates bump pendingMatchVersion,
-  // causing PossibleMatchesPanel to re-scan immediately on ingest.
-  useEffect(() => {
-    setPendingMatchHandler(() => setPendingMatchVersion(v => v + 1))
-    return () => setPendingMatchHandler(() => {})
-  }, [])
 
   if (!session) return null
 
@@ -144,6 +137,14 @@ function MainShell() {
   const { session, syncVersion, mergeSessions, acceptMergeItem, skipMergeItem, acceptAllMerge, skipAllMerge, dismissMerge } = useApp()
   const [tab, setTab] = useState<Tab>('tree')
   const [graphRoot, setGraphRoot] = useState<string | null>(null)
+  const [pendingMatchVersion, setPendingMatchVersion] = useState(0)
+
+  // Register the pending-match handler at app level so duplicate detection
+  // fires regardless of which tab is currently open.
+  useEffect(() => {
+    setPendingMatchHandler(() => setPendingMatchVersion(v => v + 1))
+    return () => setPendingMatchHandler(() => {})
+  }, [])
 
   // When sync delivers new relationships, if the current root has no edges,
   // switch to the first person who does so the tree becomes visible.
@@ -235,7 +236,7 @@ function MainShell() {
             {t('tree.noRoot', { defaultValue: 'Select a person from the People list to view their family tree.' })}
           </div>
         )}
-        {tab === 'connect' && <ConnectTab />}
+        {tab === 'connect' && <ConnectTab pendingMatchVersion={pendingMatchVersion} />}
         {tab === 'settings' && <SettingsView />}
         {tab === 'about' && <AboutView />}
       </main>

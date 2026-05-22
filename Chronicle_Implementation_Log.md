@@ -1219,3 +1219,26 @@ Instance 2's own npub is not in instance 1's relationship graph. Setting graphRo
 ### Gotcha #51 — Never filter relay subscriptions by authors
 
 The relay subscription filter must not include an `authors` list. The filter is static (sent once at REQ time); any pubkey not in the list at that moment is permanently invisible for that subscription session. Since the relay is allowlist-gated, all stored events are already trusted — subscribe to kinds only and let the allowlist do the access control.
+
+### Fix person display names showing as npub stub (v1.0.84)
+
+**Root cause:** When instance 2 received a relationship event (kind 30079) before it had a person stub for the subject/related pubkeys, `ingestRelationshipClaim` created stubs with `displayName: 'Unknown'` (v1.0.82 fix). The name fact claim for those persons was already in the raw event store from an earlier sync — the deduplication check (`store.getRawEvent(event.id)`) found it and returned early, so `ingestFactClaim` never ran a second time to update the display name.
+
+Result: persons whose relationship events arrived before their name claims (or whose name claims were already stored and deduplicated) permanently showed their pubkey stub as their display name.
+
+**Fix — `replayStoredFactClaims()` in `src/lib/relaySync.ts`:**
+Scans all raw events in the store, finds any `kind=30081` (FACT_CLAIM) with `field=name`, and updates the person's `displayName` if it's still `'Unknown'` or ends with `'…'` (a pubkey stub). This is a one-time repair that's safe to run multiple times.
+
+Called from `AppContext` at four points:
+1. After session restore (loads stored raw events then immediately backfills display names).
+2. After `fetchOnConnect` completes on the main relay (initial sync done).
+3. After `fetchOnConnect` on `connectToRelay` (contact relay sync complete).
+4. After `fetchOnConnect` on `addContact` (new contact's events fetched).
+
+**Also fixed:** All stub `displayName` values changed from `pubkey.slice(0, 8) + '…'` to `'Unknown'` throughout `ingestIdentityAnchor` and `ingestFactClaim`. The `'…'` suffix is now the detection signal for the replay to update — combined with `'Unknown'` check covers all historical stub formats.
+
+**Tests: 655/655. TypeScript clean. Build clean.**
+
+### Gotcha #52 — Raw event deduplication prevents re-ingestion; use replay for backfill
+
+`ingestEvent` returns early if `store.getRawEvent(event.id)` already has the event. This means if a fact claim arrived and was stored before the person stub existed, re-sending the same event won't update the display name. Always use `replayStoredFactClaims()` after session restore and after sync completes to guarantee display names are correct from stored events.

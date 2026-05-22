@@ -513,7 +513,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // filters — without this, each instance only fetches events from pubkeys
     // it already knows locally, and never sees the other instance's tree data.
     setContactPubkeysProvider(() => contactMgrRef.current.getAll().map(c => c.npub))
-    setSyncUpdateHandler(() => setSyncVersion(v => v + 1))
+    setSyncUpdateHandler(() => {
+      replayStoredFactClaims()
+      setSyncVersion(v => v + 1)
+    })
 
     // Register join request/accept handlers so incoming events update the UI
     setJoinRequestHandler((req) => {
