@@ -21,6 +21,7 @@ import { AboutView } from './components/AboutView'
 import { NewVersionBanner } from './components/NewVersionBanner'
 import { useState, useEffect } from 'react'
 import { schemaVersionChecker } from './lib/schemaVersion'
+import { getAllRelationships } from './lib/graph'
 import { setPendingMatchHandler } from './lib/relaySync'
 import './chronicle.css'
 
@@ -140,9 +141,31 @@ function ConnectTab() {
 
 function MainShell() {
   const { t } = useTranslation()
-  const { session, mergeSessions, acceptMergeItem, skipMergeItem, acceptAllMerge, skipAllMerge, dismissMerge } = useApp()
+  const { session, syncVersion, mergeSessions, acceptMergeItem, skipMergeItem, acceptAllMerge, skipAllMerge, dismissMerge } = useApp()
   const [tab, setTab] = useState<Tab>('tree')
   const [graphRoot, setGraphRoot] = useState<string | null>(null)
+
+  // When sync delivers new relationships, if the current root has no edges,
+  // switch to the first person who does so the tree becomes visible.
+  useEffect(() => {
+    if (!session?.npub) return
+    const rels = getAllRelationships()
+    if (rels.length === 0) return
+    if (graphRoot) {
+      const rootHasRels = rels.some(r =>
+        r.subjectPubkey === graphRoot || r.relatedPubkey === graphRoot
+      )
+      if (!rootHasRels) {
+        setGraphRoot(rels[0].subjectPubkey)
+      }
+    } else {
+      // Auto-set root on first sync that delivers relationships
+      const hasOwnRels = rels.some(r =>
+        r.subjectPubkey === session.npub || r.relatedPubkey === session.npub
+      )
+      setGraphRoot(hasOwnRels ? session.npub : rels[0].subjectPubkey)
+    }
+  }, [syncVersion])  // eslint-disable-line react-hooks/exhaustive-deps
   const [showVersionBanner, setShowVersionBanner] = useState(false)
 
   // Poll schema version checker — banner appears if a newer-version event is seen
@@ -171,7 +194,23 @@ function MainShell() {
           </button>
           <button
             className={`app-nav-tab${tab === 'graph' ? ' active' : ''}`}
-            onClick={() => { setTab('graph'); if (!graphRoot && session?.npub) setGraphRoot(session.npub) }}
+            onClick={() => {
+                setTab('graph')
+                if (!graphRoot && session?.npub) {
+                  // Use session npub as root if they have relationships,
+                  // otherwise find the first person in the graph who does.
+                  const rels = getAllRelationships()
+                  const hasRels = rels.some(r =>
+                    r.subjectPubkey === session.npub || r.relatedPubkey === session.npub
+                  )
+                  if (hasRels) {
+                    setGraphRoot(session.npub)
+                  } else {
+                    const firstConnected = rels[0]?.subjectPubkey ?? session.npub
+                    setGraphRoot(firstConnected)
+                  }
+                }
+              }}
           >
             {t('nav.graph', { defaultValue: 'Family Tree' })}
           </button>

@@ -1140,3 +1140,29 @@ The mine/theirs split by claimant pubkey only works when there is a clean bounda
 ### Gotcha #48 — TreeView dedup must use resolveCanonicalPubkey, not claimant heuristics
 
 Hiding non-canonical duplicates by checking which claimant is "local" is fragile. `resolveCanonicalPubkey` follows the link chain and returns a stable, deterministic result (lexicographically smallest pubkey in the link cluster). Any person whose pubkey differs from their canonical form is a secondary entry and should be hidden.
+
+### Retroactive dedup + manual linking + relationship repair (v1.0.81)
+
+**Three issues addressed:**
+
+**Issue 1 — Dedup not retroactive**
+The v1.0.80 auto-detect only fired on new `ingestFactClaim` events. If both records already existed in the store from a previous session (restored from `chronicle:store`), nothing triggered a scan. Fixed by:
+- `PossibleMatchesPanel`: shows a "🔍 Scan for duplicate people" button when the candidate list is empty, allowing on-demand rescanning at any time.
+- `AppContext`: `triggerDupesScan()` exported (bumps `syncVersion`) for programmatic triggering.
+- The panel always runs `computeCandidates(dismissed)` on mount via the `useEffect` dependency on `syncVersion` and `pendingMatchVersion`.
+
+**Issue 2 — No manual "same person" linking**
+Added a "This is the same person as someone else in the list…" button to the selected-person panel in `TreeView`. Clicking it opens an inline picker showing all other canonical persons (non-hidden). Selecting one immediately publishes a kind-30083 same-person link event, adds it to the local graph, hides the duplicate, and clears the selection. Works regardless of whether a contact is connected.
+
+**Issue 3 — Family tree not showing remote relationships**
+Root cause confirmed: relationship events stored before v1.0.79 lack the `related` tag. `ingestRelationshipClaim` requires that tag and silently drops events without it — correct behaviour for new events, but it means all pre-fix stored events are dead on arrival at the remote instance.
+
+Fix: `repairRelationships()` added to `AppContext`. It iterates `getAllRelationships()` from the local graph (which has `relatedPubkey` intact regardless of the raw event), builds fresh signed kind-30079 events with the correct `related` tag for every relationship this session owns, stores them as raw events, and pushes them to all connected relays. A "↺ Repair missing tree connections" button in the Connect tab (visible when contacts are connected) calls this. The remote instance will ingest the repaired events and add them to its graph, causing the tree to render correctly on next sync.
+
+**Files changed:**
+- `src/context/AppContext.tsx`: added `repairRelationships`, `triggerDupesScan` to interface + implementation; added `getAllRelationships` and `buildRelationshipClaim` imports.
+- `src/components/TreeView.tsx`: added `linkPickerFor` state, `buildSamePersonLink` + `addSamePersonLink` imports, manual same-person picker UI under selected person's profile card; consolidated double `useApp()` call.
+- `src/components/PossibleMatchesPanel.tsx`: shows "Scan for duplicates" button when candidate list is empty.
+- `src/App.tsx`: added `repairRelationships` to ConnectTab destructuring; added "Repair missing tree connections" button below PossibleMatchesPanel.
+
+**Tests: 655/655. TypeScript clean. Build clean.**

@@ -368,8 +368,35 @@ function ingestRelationshipClaim(event: ChronicleEvent): void {
   const relationship = getTag(event, 'relationship')
   const related = getTag(event, 'related')
 
-  if (!subject || !relationship || !related) return
-  if (!KNOWN_RELATIONSHIP_TYPES.includes(relationship as RelationshipType)) return
+  if (!subject || !relationship) {
+    console.warn('[ingestRelationshipClaim] missing subject or relationship tag', event.tags)
+    return
+  }
+  if (!related) {
+    console.warn('[ingestRelationshipClaim] missing related tag — event pre-dates v1.0.79, skipping', event.id?.slice(0,8))
+    return
+  }
+  if (!KNOWN_RELATIONSHIP_TYPES.includes(relationship as RelationshipType)) {
+    console.warn('[ingestRelationshipClaim] unknown relationship type:', relationship)
+    return
+  }
+
+  // Ensure both persons exist as stubs before adding the relationship.
+  // Relationship events can arrive before identity anchors or fact claims —
+  // without stubs, traverseGraph finds the edge but can't render either node.
+  const ensurePersonStub = (pubkey: string) => {
+    if (!store.getPerson(pubkey)) {
+      store.upsertPerson({
+        pubkey,
+        displayName: 'Unknown',
+        isLiving: false,
+        createdAt: event.created_at,
+      })
+      console.log('[ingestRelationshipClaim] created stub for', pubkey.slice(0, 12))
+    }
+  }
+  ensurePersonStub(subject)
+  ensurePersonStub(related)
 
   const sensitive = getTag(event, 'sensitive') === 'true'
   const subtype = getTag(event, 'subtype')
@@ -390,6 +417,7 @@ function ingestRelationshipClaim(event: ChronicleEvent): void {
     retracted: false,
   }
 
+  console.log('[ingestRelationshipClaim] adding', relationship, 'between', subject.slice(0,12), '→', related.slice(0,12))
   addRelationship(rel)
 }
 
