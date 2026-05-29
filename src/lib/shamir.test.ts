@@ -14,7 +14,7 @@ import {
   DEFAULT_SHAMIR_THRESHOLD,
   DEFAULT_SHAMIR_TOTAL,
 } from './shamir'
-import { generateAncestorKeyPair, nsecToHex } from './keys'
+import { nsecToHex } from './keys'
 
 // Helpers
 function makeHolderNpubs(n: number): string[] {
@@ -106,9 +106,10 @@ describe('combineShares', () => {
   })
 
   it('round-trips a real ancestor key', () => {
-    const kp = generateAncestorKeyPair()
-    const nsecHex = nsecToHex(kp.nsec)
-    const split = splitAncestorKeyFor(kp.npub, nsecHex, makeHolderNpubs(5), 3)
+    const nsec = 'nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw'
+    const nsecHex = nsecToHex(nsec)
+    const ancestorId = 'test-ancestor-uuid-1234'
+    const split = splitAncestorKeyFor(ancestorId, nsecHex, makeHolderNpubs(5), 3)
     const recovered = combineShares(split.shares.slice(0, 3))
     expect(verifyRecoveredKey(recovered, nsecHex)).toBe(true)
   })

@@ -60,7 +60,7 @@ function computeCandidates(dismissed: Set<string>): MatchCandidate[] {
 
   const allClaims   = store.getAllClaims()
   const existingLinks = getAllSamePersonLinks()
-  const pubkeys = allPersons.map(p => p.pubkey)
+  const pubkeys = allPersons.map(p => p.id)
 
   // findMatchCandidates compares setA × setB; passing the same set for both
   // gives us all cross-pair comparisons (same-pubkey pairs are skipped inside).
@@ -68,11 +68,11 @@ function computeCandidates(dismissed: Set<string>): MatchCandidate[] {
 
   const seen = new Set<string>()
   return raw.filter(c => {
-    if (c.pubkeyA === c.pubkeyB) return false
-    const key = pairKey(c.pubkeyA, c.pubkeyB)
+    if (c.idA === c.idB) return false
+    const key = pairKey(c.idA, c.idB)
     if (seen.has(key)) return false
     seen.add(key)
-    if (alreadyLinked(c.pubkeyA, c.pubkeyB, existingLinks)) return false
+    if (alreadyLinked(c.idA, c.idB, existingLinks)) return false
     if (dismissed.has(key)) return false
     return true
   })
@@ -104,19 +104,19 @@ export function PossibleMatchesPanel({ syncVersion, pendingMatchVersion }: Possi
 
   const handleConfirm = useCallback(async (candidate: MatchCandidate) => {
     if (!session) return
-    setConfirming(pairKey(candidate.pubkeyA, candidate.pubkeyB))
+    setConfirming(pairKey(candidate.idA, candidate.idB))
 
     try {
       const event = buildSamePersonLink(
         session.npub, session.nsec,
-        candidate.pubkeyA, candidate.pubkeyB,
+        candidate.idA, candidate.idB,
       )
       publishEvent(event)
 
       const link: SamePersonLink = {
         eventId: event.id,
-        pubkeyA: candidate.pubkeyA,
-        pubkeyB: candidate.pubkeyB,
+        idA: candidate.idA,
+        idB: candidate.idB,
         claimantPubkey: session.npub,
         createdAt: event.created_at,
         retracted: false,
@@ -124,7 +124,7 @@ export function PossibleMatchesPanel({ syncVersion, pendingMatchVersion }: Possi
       addSamePersonLink(link)
 
       setCandidates(prev => prev.filter(c =>
-        pairKey(c.pubkeyA, c.pubkeyB) !== pairKey(candidate.pubkeyA, candidate.pubkeyB)
+        pairKey(c.idA, c.idB) !== pairKey(candidate.idA, candidate.idB)
       ))
     } finally {
       setConfirming(null)
@@ -132,7 +132,7 @@ export function PossibleMatchesPanel({ syncVersion, pendingMatchVersion }: Possi
   }, [session, publishEvent])
 
   const handleDismiss = useCallback((candidate: MatchCandidate) => {
-    const key = pairKey(candidate.pubkeyA, candidate.pubkeyB)
+    const key = pairKey(candidate.idA, candidate.idB)
     const next = new Set(dismissed)
     next.add(key)
     setDismissed(next)
@@ -164,9 +164,9 @@ export function PossibleMatchesPanel({ syncVersion, pendingMatchVersion }: Possi
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {candidates.map(candidate => (
           <MatchCard
-            key={pairKey(candidate.pubkeyA, candidate.pubkeyB)}
+            key={pairKey(candidate.idA, candidate.idB)}
             candidate={candidate}
-            confirming={confirming === pairKey(candidate.pubkeyA, candidate.pubkeyB)}
+            confirming={confirming === pairKey(candidate.idA, candidate.idB)}
             onConfirm={() => handleConfirm(candidate)}
             onDismiss={() => handleDismiss(candidate)}
           />
@@ -187,10 +187,10 @@ interface MatchCardProps {
 
 function MatchCard({ candidate, confirming, onConfirm, onDismiss }: MatchCardProps) {
   const { t } = useTranslation()
-  const personA = store.getPerson(candidate.pubkeyA)
-  const personB = store.getPerson(candidate.pubkeyB)
-  const claimsA = store.getClaimsForPerson(candidate.pubkeyA)
-  const claimsB = store.getClaimsForPerson(candidate.pubkeyB)
+  const personA = store.getPerson(candidate.idA)
+  const personB = store.getPerson(candidate.idB)
+  const claimsA = store.getClaimsForPerson(candidate.idA)
+  const claimsB = store.getClaimsForPerson(candidate.idB)
 
   const pct = Math.round(candidate.confidence * 100)
 

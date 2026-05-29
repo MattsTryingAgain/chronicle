@@ -26,18 +26,12 @@ import type {
   Person,
   FactClaim,
   Endorsement,
-  ChronicleEvent,
-} from '../types/chronicle'
-import type {
-  StoredIdentity,
-  StoredAncestorKey,
-  RecoveryContact,
-} from './storage'
+  ChronicleEvent } from '../types/chronicle'
+import type { StoredIdentity, RecoveryContact } from './storage'
 import type {
   RelationshipClaim,
   Acknowledgement,
-  SamePersonLink,
-} from './graph'
+  SamePersonLink } from './graph'
 import type { BlossomRef, PrivacyTier } from '../types/chronicle'
 import type { MediaCacheEntry, FetchStatus } from './blossom'
 
@@ -66,38 +60,38 @@ CREATE TABLE IF NOT EXISTS ancestor_keys (
 );
 
 CREATE TABLE IF NOT EXISTS persons (
-  pubkey        TEXT PRIMARY KEY,
+  person_id     TEXT PRIMARY KEY,
   display_name  TEXT NOT NULL,
   is_living     INTEGER NOT NULL DEFAULT 0,
   created_at    INTEGER NOT NULL
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS persons_fts USING fts5(
-  pubkey UNINDEXED,
+  person_id UNINDEXED,
   display_name,
   content='persons',
   content_rowid='rowid'
 );
 
 CREATE TRIGGER IF NOT EXISTS persons_ai AFTER INSERT ON persons BEGIN
-  INSERT INTO persons_fts(rowid, pubkey, display_name)
-  VALUES (new.rowid, new.pubkey, new.display_name);
+  INSERT INTO persons_fts(rowid, person_id, display_name)
+  VALUES (new.rowid, new.person_id, new.display_name);
 END;
 CREATE TRIGGER IF NOT EXISTS persons_au AFTER UPDATE ON persons BEGIN
-  INSERT INTO persons_fts(persons_fts, rowid, pubkey, display_name)
-  VALUES ('delete', old.rowid, old.pubkey, old.display_name);
-  INSERT INTO persons_fts(rowid, pubkey, display_name)
-  VALUES (new.rowid, new.pubkey, new.display_name);
+  INSERT INTO persons_fts(persons_fts, rowid, person_id, display_name)
+  VALUES ('delete', old.rowid, old.person_id, old.display_name);
+  INSERT INTO persons_fts(rowid, person_id, display_name)
+  VALUES (new.rowid, new.person_id, new.display_name);
 END;
 CREATE TRIGGER IF NOT EXISTS persons_ad AFTER DELETE ON persons BEGIN
-  INSERT INTO persons_fts(persons_fts, rowid, pubkey, display_name)
-  VALUES ('delete', old.rowid, old.pubkey, old.display_name);
+  INSERT INTO persons_fts(persons_fts, rowid, person_id, display_name)
+  VALUES ('delete', old.rowid, old.person_id, old.display_name);
 END;
 
 CREATE TABLE IF NOT EXISTS claims (
   event_id        TEXT PRIMARY KEY,
   claimant_pubkey TEXT NOT NULL,
-  subject_pubkey  TEXT NOT NULL,
+  subject_id      TEXT NOT NULL,
   field           TEXT NOT NULL,
   value           TEXT NOT NULL,
   evidence        TEXT,
@@ -105,7 +99,7 @@ CREATE TABLE IF NOT EXISTS claims (
   retracted       INTEGER NOT NULL DEFAULT 0,
   confidence      REAL NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS claims_subject ON claims(subject_pubkey);
+CREATE INDEX IF NOT EXISTS claims_subject ON claims(subject_id);
 
 CREATE TABLE IF NOT EXISTS endorsements (
   event_id       TEXT PRIMARY KEY,
@@ -138,8 +132,8 @@ CREATE INDEX IF NOT EXISTS raw_events_pubkey ON raw_events(pubkey);
 CREATE TABLE IF NOT EXISTS relationships (
   event_id          TEXT PRIMARY KEY,
   claimant_pubkey   TEXT NOT NULL,
-  subject_pubkey    TEXT NOT NULL,
-  related_pubkey    TEXT NOT NULL,
+  subject_id    TEXT NOT NULL,
+  related_id    TEXT NOT NULL,
   relationship      TEXT NOT NULL,
   sensitive         INTEGER NOT NULL DEFAULT 0,
   subtype           TEXT,
@@ -147,8 +141,8 @@ CREATE TABLE IF NOT EXISTS relationships (
   created_at        INTEGER NOT NULL,
   retracted         INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS rel_subject ON relationships(subject_pubkey);
-CREATE INDEX IF NOT EXISTS rel_related ON relationships(related_pubkey);
+CREATE INDEX IF NOT EXISTS rel_subject ON relationships(subject_id);
+CREATE INDEX IF NOT EXISTS rel_related ON relationships(related_id);
 
 CREATE TABLE IF NOT EXISTS acknowledgements (
   event_id             TEXT PRIMARY KEY,
@@ -162,13 +156,13 @@ CREATE INDEX IF NOT EXISTS ack_claim ON acknowledgements(claim_event_id);
 CREATE TABLE IF NOT EXISTS same_person_links (
   event_id         TEXT PRIMARY KEY,
   claimant_pubkey  TEXT NOT NULL,
-  pubkey_a         TEXT NOT NULL,
-  pubkey_b         TEXT NOT NULL,
+  id_a         TEXT NOT NULL,
+  id_b         TEXT NOT NULL,
   created_at       INTEGER NOT NULL,
   retracted        INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS spl_a ON same_person_links(pubkey_a);
-CREATE INDEX IF NOT EXISTS spl_b ON same_person_links(pubkey_b);
+CREATE INDEX IF NOT EXISTS spl_a ON same_person_links(id_a);
+CREATE INDEX IF NOT EXISTS spl_b ON same_person_links(id_b);
 
 CREATE TABLE IF NOT EXISTS media_cache (
   url         TEXT PRIMARY KEY,
@@ -229,8 +223,7 @@ export class SqliteStore {
       npub: row.npub,
       displayName: row.display_name,
       encryptedNsec: JSON.parse(row.encrypted_nsec),
-      createdAt: row.created_at,
-    }
+      createdAt: row.created_at }
   }
 
   hasIdentity(): boolean {
@@ -243,69 +236,50 @@ export class SqliteStore {
 
   // ── Ancestor Keys ─────────────────────────────────────────────────────────
 
-  setAncestorKey(npub: string, key: StoredAncestorKey): void {
-    this.db
-      .prepare(
-        `INSERT INTO ancestor_keys (npub, encrypted_privkey)
-         VALUES (?, ?)
-         ON CONFLICT(npub) DO UPDATE SET encrypted_privkey = excluded.encrypted_privkey`,
-      )
-      .run(npub, JSON.stringify(key.encryptedPrivkey))
-  }
+  setAncestorKey(_npub: string, _key: unknown): void { /* ancestor keys deprecated */ }
 
-  getAncestorKey(npub: string): StoredAncestorKey | undefined {
-    const row = this.db
-      .prepare('SELECT * FROM ancestor_keys WHERE npub = ?')
-      .get(npub) as { npub: string; encrypted_privkey: string } | undefined
-    if (!row) return undefined
-    return {
-      npub: row.npub,
-      encryptedPrivkey: JSON.parse(row.encrypted_privkey),
-    }
-  }
+  getAncestorKey(_npub: string): undefined { return undefined }
 
   // ── Persons ───────────────────────────────────────────────────────────────
 
   upsertPerson(person: Person): void {
     this.db
       .prepare(
-        `INSERT INTO persons (pubkey, display_name, is_living, created_at)
+        `INSERT INTO persons (person_id, display_name, is_living, created_at)
          VALUES (?, ?, ?, ?)
-         ON CONFLICT(pubkey) DO UPDATE SET
+         ON CONFLICT(person_id) DO UPDATE SET
            display_name = excluded.display_name,
            is_living = excluded.is_living`,
       )
-      .run(person.pubkey, person.displayName, person.isLiving ? 1 : 0, person.createdAt)
+      .run(person.id, person.displayName, person.isLiving ? 1 : 0, person.createdAt)
   }
 
-  getPerson(pubkey: string): Person | undefined {
+  getPerson(personId: string): Person | undefined {
     const row = this.db
-      .prepare('SELECT * FROM persons WHERE pubkey = ?')
-      .get(pubkey) as
-      | { pubkey: string; display_name: string; is_living: number; created_at: number }
+      .prepare('SELECT * FROM persons WHERE person_id = ?')
+      .get(personId) as
+      | { person_id: string; display_name: string; is_living: number; created_at: number }
       | undefined
     if (!row) return undefined
     return {
-      pubkey: row.pubkey,
+      id: row.person_id,
       displayName: row.display_name,
       isLiving: row.is_living === 1,
-      createdAt: row.created_at,
-    }
+      createdAt: row.created_at }
   }
 
   getAllPersons(): Person[] {
     const rows = this.db.prepare('SELECT * FROM persons ORDER BY created_at').all() as Array<{
-      pubkey: string
+      person_id: string
       display_name: string
       is_living: number
       created_at: number
     }>
     return rows.map((r) => ({
-      pubkey: r.pubkey,
+      id: r.person_id,
       displayName: r.display_name,
       isLiving: r.is_living === 1,
-      createdAt: r.created_at,
-    }))
+      createdAt: r.created_at }))
   }
 
   searchPersons(query: string): Person[] {
@@ -315,22 +289,21 @@ export class SqliteStore {
     const rows = this.db
       .prepare(
         `SELECT p.* FROM persons p
-         JOIN persons_fts f ON p.pubkey = f.pubkey
+         JOIN persons_fts f ON p.person_id = f.person_id
          WHERE persons_fts MATCH ?
          ORDER BY p.created_at`,
       )
       .all(`"${q.replace(/"/g, '""')}"*`) as Array<{
-      pubkey: string
+      person_id: string
       display_name: string
       is_living: number
       created_at: number
     }>
     return rows.map((r) => ({
-      pubkey: r.pubkey,
+      id: r.person_id,
       displayName: r.display_name,
       isLiving: r.is_living === 1,
-      createdAt: r.created_at,
-    }))
+      createdAt: r.created_at }))
   }
 
   // ── Fact Claims ───────────────────────────────────────────────────────────
@@ -339,14 +312,14 @@ export class SqliteStore {
     this.db
       .prepare(
         `INSERT INTO claims
-           (event_id, claimant_pubkey, subject_pubkey, field, value, evidence, created_at, retracted, confidence)
+           (event_id, claimant_pubkey, subject_id, field, value, evidence, created_at, retracted, confidence)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(event_id) DO NOTHING`,
       )
       .run(
         claim.eventId,
         claim.claimantPubkey,
-        claim.subjectPubkey,
+        claim.subjectId,
         claim.field,
         claim.value,
         claim.evidence ?? null,
@@ -356,13 +329,13 @@ export class SqliteStore {
       )
   }
 
-  getClaimsForPerson(subjectPubkey: string): FactClaim[] {
+  getClaimsForPerson(subjectId: string): FactClaim[] {
     const rows = this.db
-      .prepare('SELECT * FROM claims WHERE subject_pubkey = ? ORDER BY created_at')
-      .all(subjectPubkey) as Array<{
+      .prepare('SELECT * FROM claims WHERE subject_id = ? ORDER BY created_at')
+      .all(subjectId) as Array<{
       event_id: string
       claimant_pubkey: string
-      subject_pubkey: string
+      subject_id: string
       field: string
       value: string
       evidence: string | null
@@ -373,14 +346,13 @@ export class SqliteStore {
     return rows.map((r) => ({
       eventId: r.event_id,
       claimantPubkey: r.claimant_pubkey,
-      subjectPubkey: r.subject_pubkey,
+      subjectId: r.subject_id,
       field: r.field as FactClaim['field'],
       value: r.value,
       evidence: r.evidence ?? undefined,
       createdAt: r.created_at,
       retracted: r.retracted === 1,
-      confidenceScore: r.confidence,
-    }))
+      confidenceScore: r.confidence }))
   }
 
   retractClaim(eventId: string): void {
@@ -439,8 +411,7 @@ export class SqliteStore {
       endorserPubkey: r.endorser_pubkey,
       proximity: r.proximity as Endorsement['proximity'],
       agree: r.agree === 1,
-      createdAt: r.created_at,
-    }))
+      createdAt: r.created_at }))
   }
 
   // ── Recovery Contacts ─────────────────────────────────────────────────────
@@ -466,8 +437,7 @@ export class SqliteStore {
     return rows.map((r) => ({
       pubkey: r.pubkey,
       displayName: r.display_name,
-      addedAt: r.added_at,
-    }))
+      addedAt: r.added_at }))
   }
 
   // ── Raw Events ───────────────────────────────────────────────────────────
@@ -512,8 +482,7 @@ export class SqliteStore {
       kind: row.kind as ChronicleEvent['kind'],
       tags: JSON.parse(row.tags),
       content: row.content,
-      sig: row.sig,
-    }
+      sig: row.sig }
   }
 
   getAllRawEvents(): ChronicleEvent[] {
@@ -535,8 +504,7 @@ export class SqliteStore {
       kind: r.kind as ChronicleEvent['kind'],
       tags: JSON.parse(r.tags),
       content: r.content,
-      sig: r.sig,
-    }))
+      sig: r.sig }))
   }
 
   // ── Relationships ─────────────────────────────────────────────────────────
@@ -545,7 +513,7 @@ export class SqliteStore {
     this.db
       .prepare(
         `INSERT INTO relationships
-           (event_id, claimant_pubkey, subject_pubkey, related_pubkey, relationship,
+           (event_id, claimant_pubkey, subject_id, related_id, relationship,
             sensitive, subtype, relay, created_at, retracted)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(event_id) DO NOTHING`,
@@ -553,8 +521,8 @@ export class SqliteStore {
       .run(
         rel.eventId,
         rel.claimantPubkey,
-        rel.subjectPubkey,
-        rel.relatedPubkey,
+        rel.subjectId,
+        rel.relatedId,
         rel.relationship,
         rel.sensitive ? 1 : 0,
         rel.subtype ?? null,
@@ -575,14 +543,14 @@ export class SqliteStore {
     return row ? rowToRel(row) : undefined
   }
 
-  getRelationshipsFor(pubkey: string): RelationshipClaim[] {
+  getRelationshipsFor(personId: string): RelationshipClaim[] {
     const rows = this.db
       .prepare(
         `SELECT * FROM relationships
-         WHERE (subject_pubkey = ? OR related_pubkey = ?) AND retracted = 0
+         WHERE (subject_id = ? OR related_id = ?) AND retracted = 0
          ORDER BY created_at`,
       )
-      .all(pubkey, pubkey) as RelRow[]
+      .all(personId, personId) as RelRow[]
     return rows.map(rowToRel)
   }
 
@@ -624,15 +592,15 @@ export class SqliteStore {
     this.db
       .prepare(
         `INSERT INTO same_person_links
-           (event_id, claimant_pubkey, pubkey_a, pubkey_b, created_at, retracted)
+           (event_id, claimant_pubkey, id_a, id_b, created_at, retracted)
          VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(event_id) DO NOTHING`,
       )
       .run(
         link.eventId,
         link.claimantPubkey,
-        link.pubkeyA,
-        link.pubkeyB,
+        link.idA,
+        link.idB,
         link.createdAt,
         link.retracted ? 1 : 0,
       )
@@ -644,15 +612,15 @@ export class SqliteStore {
       .run(eventId)
   }
 
-  getSamePersonLinksFor(pubkey: string): SamePersonLink[] {
+  getSamePersonLinksFor(personId: string): SamePersonLink[] {
     return (
       this.db
         .prepare(
           `SELECT * FROM same_person_links
-           WHERE (pubkey_a = ? OR pubkey_b = ?) AND retracted = 0
+           WHERE (id_a = ? OR id_b = ?) AND retracted = 0
            ORDER BY created_at`,
         )
-        .all(pubkey, pubkey) as SplRow[]
+        .all(personId, personId) as SplRow[]
     ).map(rowToSpl)
   }
 
@@ -725,8 +693,8 @@ export class SqliteStore {
 // ─── Row types & mappers (module-private) ─────────────────────────────────────
 
 interface RelRow {
-  event_id: string; claimant_pubkey: string; subject_pubkey: string
-  related_pubkey: string; relationship: string; sensitive: number
+  event_id: string; claimant_pubkey: string; subject_id: string
+  related_id: string; relationship: string; sensitive: number
   subtype: string | null; relay: string | null; created_at: number; retracted: number
 }
 interface AckRow {
@@ -734,8 +702,8 @@ interface AckRow {
   approved: number; created_at: number
 }
 interface SplRow {
-  event_id: string; claimant_pubkey: string; pubkey_a: string
-  pubkey_b: string; created_at: number; retracted: number
+  event_id: string; claimant_pubkey: string; id_a: string
+  id_b: string; created_at: number; retracted: number
 }
 export interface MediaCacheRow {
   url: string; hash: string; local_path: string | null
@@ -746,15 +714,14 @@ function rowToRel(r: RelRow): RelationshipClaim {
   return {
     eventId: r.event_id,
     claimantPubkey: r.claimant_pubkey,
-    subjectPubkey: r.subject_pubkey,
-    relatedPubkey: r.related_pubkey,
+    subjectId: r.subject_id,
+    relatedId: r.related_id,
     relationship: r.relationship as RelationshipClaim['relationship'],
     sensitive: r.sensitive === 1,
     subtype: (r.subtype ?? undefined) as RelationshipClaim['subtype'],
     relay: r.relay ?? undefined,
     createdAt: r.created_at,
-    retracted: r.retracted === 1,
-  }
+    retracted: r.retracted === 1 }
 }
 function rowToAck(r: AckRow): Acknowledgement {
   return {
@@ -762,18 +729,16 @@ function rowToAck(r: AckRow): Acknowledgement {
     claimEventId: r.claim_event_id,
     acknowledgerPubkey: r.acknowledger_pubkey,
     approved: r.approved === 1,
-    createdAt: r.created_at,
-  }
+    createdAt: r.created_at }
 }
 function rowToSpl(r: SplRow): SamePersonLink {
   return {
     eventId: r.event_id,
     claimantPubkey: r.claimant_pubkey,
-    pubkeyA: r.pubkey_a,
-    pubkeyB: r.pubkey_b,
+    idA: r.id_a,
+    idB: r.id_b,
     createdAt: r.created_at,
-    retracted: r.retracted === 1,
-  }
+    retracted: r.retracted === 1 }
 }
 
 function rowToMediaCacheEntry(r: MediaCacheRow): MediaCacheEntry {
@@ -785,11 +750,9 @@ function rowToMediaCacheEntry(r: MediaCacheRow): MediaCacheEntry {
     // recoverable from the originating event. Return minimal values here.
     subjectNpub: '',
     mimeType: '',
-    size: 0,
-  }
+    size: 0 }
   return {
     ref,
     status: r.fetch_status as FetchStatus,
-    localUrl: r.local_path ?? undefined,
-  }
+    localUrl: r.local_path ?? undefined }
 }

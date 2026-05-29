@@ -48,7 +48,7 @@ import {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface NodeData {
-  pubkey: string
+  id: string  // person ID (UUID for ancestors, npub for living user)
   displayName: string
   birthYear: string | null
   deathYear: string | null
@@ -60,7 +60,7 @@ interface NodeData {
 
 interface FamilyTreeViewProps {
   rootPubkey: string
-  onSelectPerson?: (pubkey: string) => void
+  onSelectPerson?: (personId: string) => void
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -71,16 +71,16 @@ function extractYear(val: string | null): string | null {
   return m ? m[1] : null
 }
 
-function buildNodeData(pubkey: string): NodeData {
-  const person: Person | undefined = store.getPerson(pubkey)
-  const claims = store.getClaimsForPerson(pubkey)
+function buildNodeData(personId: string): NodeData {
+  const person: Person | undefined = store.getPerson(personId)
+  const claims = store.getClaimsForPerson(personId)
   const endorsements = store.getAllEndorsements()
   const resolutions = resolveAllFields(claims, endorsements)
   const hasConflict = resolutions.some(r => r.conflictState === 'hard' || r.conflictState === 'soft')
   const born = resolutions.find(r => r.field === 'born')?.winningClaim?.value ?? null
   const died = resolutions.find(r => r.field === 'died')?.winningClaim?.value ?? null
   return {
-    pubkey,
+    id: personId,
     displayName: person?.displayName ?? 'Unknown',
     birthYear: extractYear(born),
     deathYear: extractYear(died),
@@ -95,27 +95,27 @@ function buildNodeData(pubkey: string): NodeData {
 // ─── Action Panel ─────────────────────────────────────────────────────────────
 
 interface ActionPanelProps {
-  pubkey: string
+  personId: string
   rootPubkey: string
   onClose: () => void
-  onMakeRoot: (pubkey: string) => void
+  onMakeRoot: (personId: string) => void
   onTreeRefresh: () => void
-  onPersonDeleted: (pubkey: string) => void
+  onPersonDeleted: (personId: string) => void
 }
 
-function ActionPanel({ pubkey, rootPubkey, onClose, onMakeRoot, onTreeRefresh, onPersonDeleted }: ActionPanelProps) {
+function ActionPanel({ personId, rootPubkey, onClose, onMakeRoot, onTreeRefresh, onPersonDeleted }: ActionPanelProps) {
   const { contacts } = useApp()
   const [profileModal, setProfileModal] = useState<'view' | 'edit' | null>(null)
 
-  const person = store.getPerson(pubkey)
+  const person = store.getPerson(personId)
   if (!person) return null
 
   // A person is a "connected contact" if their pubkey matches a known contact's npub.
-  const isContact = contacts.some(c => c.npub === pubkey)
-  const isRoot = pubkey === rootPubkey
+  const isContact = contacts.some(c => c.npub === personId)
+  const isRoot = personId === rootPubkey
 
   const initials = person.displayName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
-  const claims = store.getClaimsForPerson(pubkey)
+  const claims = store.getClaimsForPerson(personId)
   const endorsements = store.getAllEndorsements()
   const resolutions = resolveAllFields(claims, endorsements)
   const born  = resolutions.find(r => r.field === 'born')?.winningClaim?.value
@@ -164,7 +164,7 @@ function ActionPanel({ pubkey, rootPubkey, onClose, onMakeRoot, onTreeRefresh, o
         {isContact && !isRoot && (
           <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-soft)' }}>
             <button className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center' }}
-              onClick={() => { onMakeRoot(pubkey); onClose() }}>
+              onClick={() => { onMakeRoot(personId); onClose() }}>
               View tree from {person.displayName}'s perspective
             </button>
           </div>
@@ -173,7 +173,7 @@ function ActionPanel({ pubkey, rootPubkey, onClose, onMakeRoot, onTreeRefresh, o
 
       {profileModal && (
         <PersonProfileModal
-          pubkey={pubkey}
+          pubkey={personId}
           startInEditMode={profileModal === 'edit'}
           onClose={() => setProfileModal(null)}
           onSaved={() => { onTreeRefresh(); setProfileModal(null) }}
@@ -230,17 +230,17 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
   const containerRef = useRef<HTMLDivElement>(null)
   const [nodeCount, setNodeCount]       = useState(0)
   const [truncated, setTruncated]       = useState(false)
-  const [selectedPubkey, setSelectedPubkey] = useState<string | null>(null)
+  const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null)
   const [treeVersion, setTreeVersion] = useState(0)
   const { syncVersion } = useApp()
 
-  const handleClosePanel  = useCallback(() => setSelectedPubkey(null), [])
+  const handleClosePanel  = useCallback(() => setSelectedPersonId(null), [])
   const handleMakeRoot    = useCallback((pk: string) => onSelectPerson?.(pk), [onSelectPerson])
   const handleTreeRefresh = useCallback(() => setTreeVersion(v => v + 1), [])
   const handlePersonDeleted = useCallback((pk: string) => {
-    if (pk === selectedPubkey) setSelectedPubkey(null)
+    if (pk === selectedPersonId) setSelectedPersonId(null)
     setTreeVersion(v => v + 1)
-  }, [selectedPubkey])
+  }, [selectedPersonId])
 
   const draw = useCallback(() => {
     if (!svgRef.current || !containerRef.current) return
@@ -391,7 +391,7 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
       const parentMidX = (parentMinX + parentMaxX) / 2
 
       const parentsAreCouple = parentNodes.length === 2
-        && isSpousePair(parentNodes[0].pubkey, parentNodes[1].pubkey)
+        && isSpousePair(parentNodes[0].id, parentNodes[1].id)
         && parentNodes[0].y === parentNodes[1].y
 
       // parentArmY/childArmY are constant per generation pair so vertical
@@ -513,25 +513,25 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
     // ── Nodes ──────────────────────────────────────────────────────────────────
     const nodeGroup = g.append('g').attr('class', 'nodes')
     const nodeElems = nodeGroup.selectAll<SVGGElement, NodeData>('g.node')
-      .data(Array.from(nodeMap.values()), d => d.pubkey)
+      .data(Array.from(nodeMap.values()), d => d.id)
       .join('g').attr('class', 'node')
       .attr('transform', d => `translate(${d.x - NODE_W / 2},${d.y - NODE_H / 2})`)
       .style('cursor', 'pointer')
       .on('click', (_event, d) => {
-        setSelectedPubkey(prev => prev === d.pubkey ? null : d.pubkey)
+        setSelectedPersonId(prev => prev === d.id ? null : d.id)
       })
 
     nodeElems.append('rect')
       .attr('width', NODE_W).attr('height', NODE_H).attr('rx', 10)
       .attr('filter', 'url(#node-shadow)')
-      .attr('fill', d => d.pubkey === rootPubkey ? 'var(--navy)' : '#ffffff')
+      .attr('fill', d => d.id === rootPubkey ? 'var(--navy)' : '#ffffff')
       .attr('stroke', d => {
-        if (d.pubkey === selectedPubkey) return 'var(--gold)'
+        if (d.id === selectedPersonId) return 'var(--gold)'
         if (d.hasConflict) return '#c0392b'
-        if (d.pubkey === rootPubkey) return 'var(--gold)'
+        if (d.id === rootPubkey) return 'var(--gold)'
         return 'var(--border-soft)'
       })
-      .attr('stroke-width', d => d.pubkey === selectedPubkey || d.pubkey === rootPubkey ? 2 : 1)
+      .attr('stroke-width', d => d.id === selectedPersonId || d.id === rootPubkey ? 2 : 1)
 
     nodeElems.filter(d => d.isLiving)
       .append('circle')
@@ -541,14 +541,14 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
       .attr('x', NODE_W / 2).attr('y', 26)
       .attr('text-anchor', 'middle')
       .attr('font-size', 13).attr('font-family', 'Lora, Georgia, serif').attr('font-weight', '600')
-      .attr('fill', d => d.pubkey === rootPubkey ? 'var(--gold-light)' : 'var(--navy)')
+      .attr('fill', d => d.id === rootPubkey ? 'var(--gold-light)' : 'var(--navy)')
       .text(d => d.displayName.length > 22 ? d.displayName.slice(0, 20) + '…' : d.displayName)
 
     nodeElems.append('text')
       .attr('x', NODE_W / 2).attr('y', 44)
       .attr('text-anchor', 'middle')
       .attr('font-size', 10.5)
-      .attr('fill', d => d.pubkey === rootPubkey ? 'rgba(201,169,110,0.8)' : 'var(--ink-muted)')
+      .attr('fill', d => d.id === rootPubkey ? 'rgba(201,169,110,0.8)' : 'var(--ink-muted)')
       .text(d => {
         if (d.birthYear && d.deathYear) return `${d.birthYear} – ${d.deathYear}`
         if (d.birthYear) return `b. ${d.birthYear}`
@@ -572,7 +572,7 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
         .translate(width / 2 - scale * cx, height / 2 - scale * cy)
         .scale(scale))
     }
-  }, [rootPubkey, selectedPubkey, treeVersion, syncVersion])
+  }, [rootPubkey, selectedPersonId, treeVersion, syncVersion])
 
   useEffect(() => { draw() }, [draw])
   useEffect(() => {
@@ -601,9 +601,9 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
 
       <div ref={containerRef} style={{ flex: 1, position: 'relative', overflow: 'hidden', background: 'var(--cream)' }}>
         <svg ref={svgRef} style={{ width: '100%', height: '100%' }} />
-        {selectedPubkey && (
+        {selectedPersonId && (
           <ActionPanel
-            pubkey={selectedPubkey}
+            personId={selectedPersonId}
             rootPubkey={rootPubkey}
             onClose={handleClosePanel}
             onMakeRoot={handleMakeRoot}

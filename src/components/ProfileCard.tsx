@@ -108,7 +108,7 @@ function relTypeLabel(rel: string): string {
 
 function RelationshipsSection({ pubkey }: { pubkey: string }) {
   const rels = getRelationshipsFor(pubkey)
-    .filter(r => r.subjectPubkey === pubkey && !r.retracted)
+    .filter(r => r.subjectId === pubkey && !r.retracted)
 
   if (rels.length === 0) return null
 
@@ -123,7 +123,7 @@ function RelationshipsSection({ pubkey }: { pubkey: string }) {
         Relationships
       </div>
       {sorted.map(rel => {
-        const other = store.getPerson(rel.relatedPubkey)
+        const other = store.getPerson(rel.relatedId)
         const meta = rel.meta
         return (
           <div key={rel.eventId} style={{ marginBottom: 10 }}>
@@ -241,7 +241,7 @@ export function ProfileCard({
         </div>
 
         {/* Relationships */}
-        <RelationshipsSection pubkey={person.pubkey} />
+        <RelationshipsSection pubkey={person.id} />
 
         {/* Footer */}
         <div className="profile-card-footer">

@@ -23,14 +23,14 @@ class MockStatement {
       db._t('ancestor_keys').set(npub, { npub, encrypted_privkey: encPriv })
     } else if (/INSERT INTO persons/i.test(sql)) {
       const tbl = db._t('persons')
-      const [pubkey, displayName, isLiving, createdAt] = flat
-      const existing = tbl.get(pubkey)
+      const [personId, displayName, isLiving, createdAt] = flat
+      const existing = tbl.get(personId)
       const rowid = existing ? existing.rowid : db._seq('persons')
-      tbl.set(pubkey, { pubkey, display_name: displayName, is_living: isLiving, created_at: createdAt, rowid })
+      tbl.set(personId, { person_id: personId, display_name: displayName, is_living: isLiving, created_at: createdAt, rowid })
     } else if (/INSERT INTO claims/i.test(sql)) {
       const tbl = db._t('claims')
-      const [eventId, claimantPubkey, subjectPubkey, field, value, evidence, createdAt, retracted, confidence] = flat
-      if (!tbl.has(eventId)) tbl.set(eventId, { event_id: eventId, claimant_pubkey: claimantPubkey, subject_pubkey: subjectPubkey, field, value, evidence, created_at: createdAt, retracted, confidence })
+      const [eventId, claimantPubkey, subjectId, field, value, evidence, createdAt, retracted, confidence] = flat
+      if (!tbl.has(eventId)) tbl.set(eventId, { event_id: eventId, claimant_pubkey: claimantPubkey, subject_id: subjectId, field, value, evidence, created_at: createdAt, retracted, confidence })
     } else if (/UPDATE claims SET retracted/i.test(sql)) {
       const tbl = db._t('claims')
       // flat[0] could be eventId (WHERE event_id = ?) 
@@ -56,8 +56,8 @@ class MockStatement {
     // ── Stage 7: relationships ────────────────────────────────────────────────
     } else if (/INSERT INTO relationships/i.test(sql)) {
       const tbl = db._t('relationships')
-      const [eventId, claimantPubkey, subjectPubkey, relatedPubkey, relationship, sensitive, subtype, relay, createdAt, retracted] = flat
-      if (!tbl.has(eventId)) tbl.set(eventId, { event_id: eventId, claimant_pubkey: claimantPubkey, subject_pubkey: subjectPubkey, related_pubkey: relatedPubkey, relationship, sensitive, subtype: subtype ?? null, relay: relay ?? null, created_at: createdAt, retracted: retracted ?? 0 })
+      const [eventId, claimantPubkey, subjectId, relatedId, relationship, sensitive, subtype, relay, createdAt, retracted] = flat
+      if (!tbl.has(eventId)) tbl.set(eventId, { event_id: eventId, claimant_pubkey: claimantPubkey, subject_id: subjectId, related_id: relatedId, relationship, sensitive, subtype: subtype ?? null, relay: relay ?? null, created_at: createdAt, retracted: retracted ?? 0 })
     } else if (/UPDATE relationships SET retracted/i.test(sql)) {
       const tbl = db._t('relationships')
       const eventId = flat[flat.length - 1]
@@ -73,8 +73,8 @@ class MockStatement {
     // ── Stage 7: same_person_links ────────────────────────────────────────────
     } else if (/INSERT INTO same_person_links/i.test(sql)) {
       const tbl = db._t('same_person_links')
-      const [eventId, claimantPubkey, pubkeyA, pubkeyB, createdAt, retracted] = flat
-      if (!tbl.has(eventId)) tbl.set(eventId, { event_id: eventId, claimant_pubkey: claimantPubkey, pubkey_a: pubkeyA, pubkey_b: pubkeyB, created_at: createdAt, retracted: retracted ?? 0 })
+      const [eventId, claimantPubkey, idA, idB, createdAt, retracted] = flat
+      if (!tbl.has(eventId)) tbl.set(eventId, { event_id: eventId, claimant_pubkey: claimantPubkey, id_a: idA, id_b: idB, created_at: createdAt, retracted: retracted ?? 0 })
     } else if (/UPDATE same_person_links SET retracted/i.test(sql)) {
       const tbl = db._t('same_person_links')
       const eventId = flat[flat.length - 1]
@@ -107,7 +107,7 @@ class MockStatement {
 
     if (/FROM identity/i.test(sql)) return db._t('identity').get('1')
     if (/FROM ancestor_keys/i.test(sql)) return db._t('ancestor_keys').get(flat[0])
-    if (/FROM persons WHERE pubkey/i.test(sql)) return db._t('persons').get(flat[0])
+    if (/FROM persons WHERE person_id/i.test(sql)) return db._t('persons').get(flat[0])
     if (/FROM raw_events WHERE id/i.test(sql)) return db._t('raw_events').get(flat[0])
     if (/FROM relationships WHERE event_id/i.test(sql)) return db._t('relationships').get(flat[0])
     if (/FROM media_cache WHERE url/i.test(sql)) return db._t('media_cache').get(flat[0])
@@ -127,16 +127,16 @@ class MockStatement {
     }
     if (/FROM persons/i.test(sql)) return Array.from(db._t('persons').values())
 
-    if (/FROM claims WHERE subject_pubkey/i.test(sql)) return Array.from(db._t('claims').values()).filter(r => r.subject_pubkey === flat[0])
+    if (/FROM claims WHERE subject_id/i.test(sql)) return Array.from(db._t('claims').values()).filter(r => r.subject_id === flat[0])
     if (/FROM endorsements WHERE claim_event_id/i.test(sql)) return Array.from(db._t('endorsements').values()).filter(r => r.claim_event_id === flat[0])
     if (/FROM endorsements/i.test(sql)) return Array.from(db._t('endorsements').values())
     if (/FROM recovery_contacts/i.test(sql)) return Array.from(db._t('recovery_contacts').values())
     if (/FROM raw_events/i.test(sql)) return Array.from(db._t('raw_events').values())
 
     // Stage 7: relationships
-    if (/FROM relationships\s+WHERE \(subject_pubkey = \? OR related_pubkey = \?\) AND retracted = 0/i.test(sql)) {
-      const pubkey = flat[0]
-      return Array.from(db._t('relationships').values()).filter(r => (r.subject_pubkey === pubkey || r.related_pubkey === pubkey) && !r.retracted)
+    if (/FROM relationships\s+WHERE \(subject_id = \? OR related_id = \?\) AND retracted = 0/i.test(sql)) {
+      const personId = flat[0]
+      return Array.from(db._t('relationships').values()).filter(r => (r.subject_id === personId || r.related_id === personId) && !r.retracted)
     }
     if (/FROM relationships ORDER BY/i.test(sql)) return Array.from(db._t('relationships').values())
 
@@ -145,9 +145,9 @@ class MockStatement {
     if (/FROM acknowledgements ORDER BY/i.test(sql)) return Array.from(db._t('acknowledgements').values())
 
     // Stage 7: same_person_links
-    if (/FROM same_person_links\s+WHERE \(pubkey_a = \? OR pubkey_b = \?\) AND retracted = 0/i.test(sql)) {
-      const pubkey = flat[0]
-      return Array.from(db._t('same_person_links').values()).filter(r => (r.pubkey_a === pubkey || r.pubkey_b === pubkey) && !r.retracted)
+    if (/FROM same_person_links\s+WHERE \(id_a = \? OR id_b = \?\) AND retracted = 0/i.test(sql)) {
+      const personId = flat[0]
+      return Array.from(db._t('same_person_links').values()).filter(r => (r.id_a === personId || r.id_b === personId) && !r.retracted)
     }
     if (/FROM same_person_links ORDER BY/i.test(sql)) return Array.from(db._t('same_person_links').values())
 

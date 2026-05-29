@@ -41,7 +41,6 @@ import { storageSet } from '../lib/appStorage'
 import { useApp } from '../context/AppContext'
 import { buildFactClaim, buildRelationshipClaim, buildIdentityAnchor } from '../lib/eventBuilder'
 import { addRelationship } from '../lib/graph'
-import { generateAncestorKeyPair } from '../lib/keys'
 import type { FactField, FactClaim, Person } from '../types/chronicle'
 import type { RelationshipType, RelationshipMeta } from '../types/chronicle'
 import type { RelationshipClaim } from '../lib/graph'
@@ -90,7 +89,7 @@ function bestExistingValue(claims: FactClaim[], field: FactField): string {
 
 interface RelRow {
   id: string
-  relatedPubkey: string
+  relatedId: string
   relationship: RelationshipType   // what the SUBJECT is to the RELATED person
   meta: RelationshipMeta
 }
@@ -98,7 +97,7 @@ interface RelRow {
 function newRelRow(): RelRow {
   return {
     id: `row-${Math.random().toString(36).slice(2, 10)}`,
-    relatedPubkey: '',
+    relatedId: '',
     relationship: 'child',
     meta: {},
   }
@@ -168,16 +167,16 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
   const { session, publishEvent, contacts } = useApp()
 
   const isEdit = mode === 'edit'
-  const existingClaims = isEdit && editPerson ? store.getClaimsForPerson(editPerson.pubkey) : []
+  const existingClaims = isEdit && editPerson ? store.getClaimsForPerson(editPerson.id) : []
   const existingRelationships = isEdit && editPerson
-    ? getRelationshipsFor(editPerson.pubkey)
-        .filter(r => r.subjectPubkey === editPerson.pubkey && !r.retracted)
+    ? getRelationshipsFor(editPerson.id)
+        .filter(r => r.subjectId === editPerson.id && !r.retracted)
     : []
 
   // In edit mode, the name is locked for connected contacts — their chosen name
   // takes precedence. For ancestors and local entries it's freely editable.
   const isConnectedContact = isEdit && editPerson
-    ? contacts.some(c => c.npub === editPerson.pubkey)
+    ? contacts.some(c => c.npub === editPerson.id)
     : false
 
   const initFieldValues = (): Partial<Record<FactField, string>> => {
@@ -200,8 +199,8 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
   // Pending relationship rows to save on submit.
   const [relRows, setRelRows] = useState<RelRow[]>([])
 
-  const subjectPk = editPerson?.pubkey ?? null
-  const allPersons = store.getAllPersons().filter(p => p.pubkey !== subjectPk)
+  const subjectId2 = editPerson?.id ?? null
+  const allPersons = store.getAllPersons().filter(p => p.id !== subjectId2)
 
   const persistNow = useCallback(() => {
     void storageSet('chronicle:store', store.serialise())
@@ -210,8 +209,8 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
 
   const handleRemoveRelationship = useCallback((rel: RelationshipClaim) => {
     retractRelationship(rel.eventId)
-    const inverseRels = getRelationshipsFor(rel.relatedPubkey)
-      .filter(r => r.subjectPubkey === rel.relatedPubkey && r.relatedPubkey === rel.subjectPubkey)
+    const inverseRels = getRelationshipsFor(rel.relatedId)
+      .filter(r => r.subjectId === rel.relatedId && r.relatedId === rel.subjectId)
     for (const inv of inverseRels) retractRelationship(inv.eventId)
     persistNow()
     if (editPerson) onSave(editPerson)
@@ -234,7 +233,7 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
     if (!isEdit && !name.trim()) { setError('Please enter a name.'); return }
 
     for (const row of relRows) {
-      if (!row.relatedPubkey) {
+      if (!row.relatedId && !row.relatedId) {
         setError('Pick a person for each relationship, or remove the empty row.')
         return
       }
@@ -254,34 +253,34 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
           person = updated
         }
       } else {
-        let pubkey: string; let isLiving: boolean
-        if (mode === 'self' && selfPubkey) { pubkey = selfPubkey; isLiving = true }
-        else { const kp = generateAncestorKeyPair(); pubkey = kp.npub; isLiving = false }
-        person = { pubkey, displayName: name.trim(), isLiving, createdAt: now }
+        let personId: string; let isLiving: boolean
+        if (mode === 'self' && selfPubkey) { personId = selfPubkey; isLiving = true }
+        else { personId = crypto.randomUUID(); isLiving = false }
+        person = { id: personId, displayName: name.trim(), isLiving, createdAt: now }
         store.upsertPerson(person)
         // Publish an identity anchor event so remote instances know this person exists
         if (session?.nsec) {
-          const anchor = buildIdentityAnchor(pubkey, session.npub, session.nsec)
+          const anchor = buildIdentityAnchor(personId, session.npub, session.nsec)
           publishEvent(anchor)
         }
       }
 
-      const claimantPubkey = session?.npub ?? selfPubkey ?? person.pubkey
+      const claimantPubkey = session?.npub ?? selfPubkey ?? person.id
       let claimIdx = 0
 
       const addAndPublishClaim = (field: FactClaim['field'], value: string, evidenceText?: string) => {
         if (session?.nsec) {
           const event = buildFactClaim({
             claimantNpub: claimantPubkey, claimantNsec: session.nsec,
-            subjectNpub: person.pubkey, field, value, evidence: evidenceText,
+            subjectId: person.id, field, value, evidence: evidenceText,
           })
-          store.addClaim({ eventId: event.id, claimantPubkey, subjectPubkey: person.pubkey,
+          store.addClaim({ eventId: event.id, claimantPubkey, subjectId: person.id,
             field, value, evidence: evidenceText, createdAt: now, retracted: false,
             confidenceScore: evidenceText ? 1.5 : 1.0 })
           publishEvent(event)
         } else {
-          store.addClaim({ eventId: `local-${person.pubkey}-${field}-${now}-${claimIdx++}`,
-            claimantPubkey, subjectPubkey: person.pubkey, field, value, evidence: evidenceText,
+          store.addClaim({ eventId: `local-${person.id}-${field}-${now}-${claimIdx++}`,
+            claimantPubkey, subjectId: person.id, field, value, evidence: evidenceText,
             createdAt: now, retracted: false, confidenceScore: evidenceText ? 1.5 : 1.0 })
         }
       }
@@ -302,37 +301,37 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
         const invRel = inverseOf(subjRel)
         const metaToStore = Object.keys(row.meta).length > 0 ? row.meta : undefined
 
-        const makeId = (subjPubkey: string, rel: RelationshipType): string => {
+        const relatedId = row.relatedId ?? row.relatedId
+
+        const makeId = (subjId: string, rel: RelationshipType): string => {
           if (session?.nsec) {
-            // subjPubkey is the subject, the other person is determined by context:
-            // forward = person.pubkey (subject) → row.relatedPubkey (related)
-            // inverse = row.relatedPubkey (subject) → person.pubkey (related)
-            const relatedFor = subjPubkey === person.pubkey
-              ? row.relatedPubkey
-              : person.pubkey
+            // subjId is the subject person ID; determine the other side:
+            // forward = person.id (subject) → relatedId (related)
+            // inverse = relatedId (subject) → person.id (related)
+            const relatedFor = subjId === person.id ? relatedId : person.id
             const ev = buildRelationshipClaim({
               claimantNpub: claimantPubkey, claimantNsec: session.nsec,
-              subjectNpub: subjPubkey, relatedNpub: relatedFor,
+              subjectId: subjId, relatedId: relatedFor,
               relationship: rel, sensitive: false,
             })
             publishEvent(ev)
             return ev.id
           }
-          return `local-rel-${subjPubkey}-${rel}-${now}-${relIdx++}`
+          return `local-rel-${subjId}-${rel}-${now}-${relIdx++}`
         }
 
-        const fwdId = makeId(person.pubkey, subjRel)
-        const invId = makeId(row.relatedPubkey, invRel)
+        const fwdId = makeId(person.id, subjRel)
+        const invId = makeId(relatedId, invRel)
 
         addRelationship({
           eventId: fwdId, claimantPubkey,
-          subjectPubkey: person.pubkey, relatedPubkey: row.relatedPubkey,
+          subjectId: person.id, relatedId,
           relationship: subjRel, sensitive: false, meta: metaToStore,
           createdAt: now, retracted: false,
         })
         addRelationship({
           eventId: invId, claimantPubkey,
-          subjectPubkey: row.relatedPubkey, relatedPubkey: person.pubkey,
+          subjectId: relatedId, relatedId: person.id,
           relationship: invRel, sensitive: false, meta: metaToStore,
           createdAt: now, retracted: false,
         })
@@ -417,7 +416,7 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
               <label>Existing relationships</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {existingRelationships.map(rel => {
-                  const other = store.getPerson(rel.relatedPubkey)
+                  const other = store.getPerson(rel.relatedId)
                   const subjectLabel = relLabelForSubject(rel.relationship)
                   const meta = rel.meta
                   return (
@@ -459,7 +458,7 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {relRows.map(row => {
-                  const other = row.relatedPubkey ? store.getPerson(row.relatedPubkey) : null
+                  const other = row.relatedId ? store.getPerson(row.relatedId) : null
                   const otherName = other?.displayName ?? 'them'
                   return (
                     <div key={row.id} style={{
@@ -467,18 +466,18 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
                     }}>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                         <select className="form-select form-select-sm" style={{ flex: 1 }}
-                          value={row.relatedPubkey}
-                          onChange={e => updateRelRow(row.id, { relatedPubkey: e.target.value })}>
+                          value={row.relatedId}
+                          onChange={e => updateRelRow(row.id, { relatedId: e.target.value })}>
                           <option value="">— select a person —</option>
                           {allPersons.map(p => (
-                            <option key={p.pubkey} value={p.pubkey}>{p.displayName}</option>
+                            <option key={p.id} value={p.id}>{p.displayName}</option>
                           ))}
                         </select>
                         <button type="button" className="btn btn-ghost btn-sm"
                           style={{ color: '#d06040' }} onClick={() => removeRelRow(row.id)}>✕</button>
                       </div>
 
-                      {row.relatedPubkey && (
+                      {row.relatedId && (
                         <>
                           <div style={{ fontSize: 13, color: 'var(--ink-muted)', margin: '10px 0 6px' }}>
                             <strong style={{ color: 'var(--navy)' }}>{subjectName}</strong> is the … of {otherName}:
@@ -534,7 +533,7 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
                   </span>
                   <button className="btn btn-sm"
                     style={{ color: '#fff', background: '#c0392b', border: 'none' }}
-                    onClick={() => { onDelete(editPerson!.pubkey); onCancel() }}>
+                    onClick={() => { onDelete(editPerson!.id); onCancel() }}>
                     Yes, delete
                   </button>
                   <button className="btn btn-outline btn-sm" onClick={() => setConfirmDelete(false)}>Cancel</button>

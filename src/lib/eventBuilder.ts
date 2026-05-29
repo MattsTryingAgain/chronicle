@@ -59,20 +59,22 @@ function sign(unsigned: UnsignedEvent, nsec: string): ChronicleEvent {
 
 /**
  * Published once per person to establish their identity on the network.
- * Signed by the living descendant who is claiming / adding this person.
+ * Signed by the claimant (the living user adding this person).
+ *
+ * personId — UUID v4 for ancestors; session npub for the logged-in user.
+ * The person_id tag carries the stable ID so receiving instances can
+ * look up the correct person record regardless of who created it.
  */
 export function buildIdentityAnchor(
-  personNpub: string,
+  personId: string,
   claimedByNpub: string,
   claimedByNsec: string,
 ): ChronicleEvent {
-  const unsigned = build(EventKind.IDENTITY_ANCHOR, personNpub, [
+  const unsigned = build(EventKind.IDENTITY_ANCHOR, claimedByNpub, [
+    ['person_id', personId],
     ['claimed_by', claimedByNpub],
   ])
-  // Identity anchor is signed by the person's own key in theory;
-  // for ancestors whose key is held by the claimant, the claimant signs it.
-  // We use the claimant's key for signing in Stage 2.
-  return sign({ ...unsigned, pubkey: npubToHex(claimedByNpub) }, claimedByNsec)
+  return sign(unsigned, claimedByNsec)
 }
 
 // ─── Fact claim (kind 30081) ──────────────────────────────────────────────────
@@ -80,7 +82,8 @@ export function buildIdentityAnchor(
 export interface FactClaimParams {
   claimantNpub: string
   claimantNsec: string
-  subjectNpub: string
+  /** Person ID: UUID for ancestors, npub for the living user. */
+  subjectId: string
   field: FactField
   value: string
   evidence?: string
@@ -89,7 +92,7 @@ export interface FactClaimParams {
 
 export function buildFactClaim(params: FactClaimParams): ChronicleEvent {
   const tags: string[][] = [
-    ['subject', params.subjectNpub],
+    ['subject', params.subjectId],
     ['field', params.field],
     ['value', params.value],
   ]
@@ -121,16 +124,29 @@ export function buildEndorsement(params: EndorsementParams): ChronicleEvent {
 
 // ─── Same-person link (kind 30083) ────────────────────────────────────────────
 
+/**
+ * Publishes a same-person link event declaring that two person IDs refer to
+ * the same real individual. Both instances record the other's ID as an alias.
+ *
+ * idA / idB — local person IDs (UUID for ancestors, npub for living user).
+ * remoteIdA / remoteIdB — the corresponding IDs on the other instance (optional;
+ * include when known so the receiving instance can register the alias directly).
+ */
 export function buildSamePersonLink(
   claimantNpub: string,
   claimantNsec: string,
-  pubkeyA: string,
-  pubkeyB: string,
+  idA: string,
+  idB: string,
+  remoteIdA?: string,
+  remoteIdB?: string,
 ): ChronicleEvent {
-  const unsigned = build(EventKind.SAME_PERSON_LINK, claimantNpub, [
-    ['subject_a', pubkeyA],
-    ['subject_b', pubkeyB],
-  ])
+  const tags: string[][] = [
+    ['subject_a', idA],
+    ['subject_b', idB],
+  ]
+  if (remoteIdA) tags.push(['remote_a', remoteIdA])
+  if (remoteIdB) tags.push(['remote_b', remoteIdB])
+  const unsigned = build(EventKind.SAME_PERSON_LINK, claimantNpub, tags)
   return sign(unsigned, claimantNsec)
 }
 
@@ -139,9 +155,10 @@ export function buildSamePersonLink(
 export interface RelationshipClaimParams {
   claimantNpub: string
   claimantNsec: string
-  subjectNpub: string
-  /** The other person in the relationship — stored as 'related' tag in the event */
-  relatedNpub: string
+  /** Person ID: UUID for ancestors, npub for the living user. */
+  subjectId: string
+  /** Person ID of the other person in the relationship. */
+  relatedId: string
   relationship: RelationshipType
   relayUrl?: string
   sensitive?: boolean
@@ -151,8 +168,8 @@ export interface RelationshipClaimParams {
 
 export function buildRelationshipClaim(params: RelationshipClaimParams): ChronicleEvent {
   const tags: string[][] = [
-    ['subject', params.subjectNpub],
-    ['related', params.relatedNpub],   // the other person in the relationship
+    ['subject', params.subjectId],
+    ['related', params.relatedId],   // the other person in the relationship
     ['relationship', params.relationship],
     ['sensitive', params.sensitive ? 'true' : 'false'],
   ]

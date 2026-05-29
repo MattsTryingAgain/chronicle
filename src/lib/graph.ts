@@ -16,9 +16,9 @@ import type { RelationshipType, SensitiveRelationshipSubtype } from '../types/ch
 
 export interface RelationshipClaim {
   eventId: string
-  claimantPubkey: string
-  subjectPubkey: string
-  relatedPubkey: string
+  claimantPubkey: string  // session npub of whoever created this claim
+  subjectId: string      // person ID (UUID for ancestors, npub for living user)
+  relatedId: string      // person ID of the other person
   relationship: RelationshipType
   sensitive: boolean
   subtype?: SensitiveRelationshipSubtype
@@ -38,16 +38,26 @@ export interface Acknowledgement {
 
 export interface SamePersonLink {
   eventId: string
-  claimantPubkey: string
-  pubkeyA: string
-  pubkeyB: string
+  claimantPubkey: string  // session npub of whoever published this link
+  /** Local person ID on this instance for the first person in the pair. */
+  idA: string
+  /** Local person ID on this instance for the second person in the pair. */
+  idB: string
+  /** Remote person ID from the other instance for idA (if known). */
+  remoteIdA?: string
+  /** Remote person ID from the other instance for idB (if known). */
+  remoteIdB?: string
+  /** npub of the creator of the remote record for idA. */
+  creatorNpubA?: string
+  /** npub of the creator of the remote record for idB. */
+  creatorNpubB?: string
   createdAt: number
   retracted: boolean
 }
 
 export interface GraphEdge {
-  fromPubkey: string
-  toPubkey: string
+  fromId: string   // person ID
+  toId: string     // person ID
   relationship: RelationshipType
   sensitive: boolean
   subtype?: SensitiveRelationshipSubtype
@@ -76,14 +86,14 @@ export interface GraphBackend {
   addRelationship(rel: RelationshipClaim): void
   retractRelationship(eventId: string): void
   getRelationship(eventId: string): RelationshipClaim | undefined
-  getRelationshipsFor(pubkey: string): RelationshipClaim[]
+  getRelationshipsFor(personId: string): RelationshipClaim[]
   getAllRelationships(): RelationshipClaim[]
   addAcknowledgement(ack: Acknowledgement): void
   getAcknowledgementsForClaim(claimEventId: string): Acknowledgement[]
   getAllAcknowledgements(): Acknowledgement[]
   addSamePersonLink(link: SamePersonLink): void
   retractSamePersonLink(eventId: string): void
-  getSamePersonLinksFor(pubkey: string): SamePersonLink[]
+  getSamePersonLinksFor(personId: string): SamePersonLink[]
   getAllSamePersonLinks(): SamePersonLink[]
 }
 
@@ -96,10 +106,10 @@ class MemoryGraphStore implements GraphBackend {
   private _adjacency = new Map<string, Set<string>>()
 
   private _index(rel: RelationshipClaim): void {
-    if (!this._adjacency.has(rel.subjectPubkey)) this._adjacency.set(rel.subjectPubkey, new Set())
-    if (!this._adjacency.has(rel.relatedPubkey)) this._adjacency.set(rel.relatedPubkey, new Set())
-    this._adjacency.get(rel.subjectPubkey)!.add(rel.eventId)
-    this._adjacency.get(rel.relatedPubkey)!.add(rel.eventId)
+    if (!this._adjacency.has(rel.subjectId)) this._adjacency.set(rel.subjectId, new Set())
+    if (!this._adjacency.has(rel.relatedId)) this._adjacency.set(rel.relatedId, new Set())
+    this._adjacency.get(rel.subjectId)!.add(rel.eventId)
+    this._adjacency.get(rel.relatedId)!.add(rel.eventId)
   }
 
   addRelationship(rel: RelationshipClaim): void {
@@ -113,8 +123,8 @@ class MemoryGraphStore implements GraphBackend {
   getRelationship(eventId: string): RelationshipClaim | undefined {
     return this._relationships.get(eventId)
   }
-  getRelationshipsFor(pubkey: string): RelationshipClaim[] {
-    const ids = this._adjacency.get(pubkey) ?? new Set()
+  getRelationshipsFor(personId: string): RelationshipClaim[] {
+    const ids = this._adjacency.get(personId) ?? new Set()
     const out: RelationshipClaim[] = []
     for (const id of ids) {
       const r = this._relationships.get(id)
@@ -143,9 +153,9 @@ class MemoryGraphStore implements GraphBackend {
     const l = this._samePersonLinks.get(eventId)
     if (l) this._samePersonLinks.set(eventId, { ...l, retracted: true })
   }
-  getSamePersonLinksFor(pubkey: string): SamePersonLink[] {
+  getSamePersonLinksFor(personId: string): SamePersonLink[] {
     return Array.from(this._samePersonLinks.values()).filter(
-      l => !l.retracted && (l.pubkeyA === pubkey || l.pubkeyB === pubkey),
+      l => !l.retracted && (l.idA === personId || l.idB === personId),
     )
   }
   getAllSamePersonLinks(): SamePersonLink[] {
@@ -195,8 +205,8 @@ export function retractRelationship(eventId: string): void {
 export function getRelationship(eventId: string): RelationshipClaim | undefined {
   return _backend.getRelationship(eventId)
 }
-export function getRelationshipsFor(pubkey: string): RelationshipClaim[] {
-  return _backend.getRelationshipsFor(pubkey)
+export function getRelationshipsFor(personId: string): RelationshipClaim[] {
+  return _backend.getRelationshipsFor(personId)
 }
 export function getAllRelationships(): RelationshipClaim[] {
   return _backend.getAllRelationships()
@@ -218,8 +228,8 @@ export function addSamePersonLink(link: SamePersonLink): void {
 export function retractSamePersonLink(eventId: string): void {
   _backend.retractSamePersonLink(eventId)
 }
-export function getSamePersonLinksFor(pubkey: string): SamePersonLink[] {
-  return _backend.getSamePersonLinksFor(pubkey)
+export function getSamePersonLinksFor(personId: string): SamePersonLink[] {
+  return _backend.getSamePersonLinksFor(personId)
 }
 export function getAllSamePersonLinks(): SamePersonLink[] {
   return _backend.getAllSamePersonLinks()
@@ -231,14 +241,14 @@ function _isAcknowledged(claimEventId: string): boolean {
   return _backend.getAcknowledgementsForClaim(claimEventId).some(a => a.approved)
 }
 
-export function traverseGraph(rootPubkey: string, options: TraversalOptions = {}): TraversalResult {
+export function traverseGraph(rootId: string, options: TraversalOptions = {}): TraversalResult {
   const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH
   const maxNodes = options.maxNodes ?? DEFAULT_MAX_NODES
 
   const visited = new Set<string>()
   const edges: GraphEdge[] = []
-  const queue: Array<[string, number]> = [[rootPubkey, 0]]
-  visited.add(rootPubkey)
+  const queue: Array<[string, number]> = [[rootId, 0]]
+  visited.add(rootId)
   let truncated = false
 
   while (queue.length > 0) {
@@ -246,11 +256,11 @@ export function traverseGraph(rootPubkey: string, options: TraversalOptions = {}
     if (depth >= maxDepth) continue
 
     for (const rel of _backend.getRelationshipsFor(current)) {
-      const neighbour = rel.subjectPubkey === current ? rel.relatedPubkey : rel.subjectPubkey
+      const neighbour = rel.subjectId === current ? rel.relatedId : rel.subjectId
       if (!edges.find(e => e.claimEventId === rel.eventId)) {
         edges.push({
-          fromPubkey: rel.subjectPubkey,
-          toPubkey: rel.relatedPubkey,
+          fromId: rel.subjectId,
+          toId: rel.relatedId,
           relationship: rel.relationship,
           sensitive: rel.sensitive,
           subtype: rel.subtype,
@@ -272,17 +282,32 @@ export function traverseGraph(rootPubkey: string, options: TraversalOptions = {}
 
 // ─── Same-person resolution ───────────────────────────────────────────────────
 
-export function resolveCanonicalPubkey(pubkey: string, visited = new Set<string>()): string {
-  if (visited.has(pubkey)) return pubkey
-  visited.add(pubkey)
-  const links = _backend.getSamePersonLinksFor(pubkey)
-  if (links.length === 0) return pubkey
-  links.sort((a, b) => a.createdAt - b.createdAt)
-  const link = links[0]
-  const canonical = link.pubkeyA < link.pubkeyB ? link.pubkeyA : link.pubkeyB
-  if (canonical === pubkey) return pubkey
-  const other = link.pubkeyA === pubkey ? link.pubkeyB : link.pubkeyA
-  return resolveCanonicalPubkey(other, visited)
+/**
+ * Returns all local person IDs that are known to refer to the same real
+ * individual as `personId` (via same-person links). Includes `personId` itself.
+ *
+ * This replaces the old resolveCanonicalPubkey — there is no single winner;
+ * each instance keeps its own ID and records aliases for the other.
+ */
+export function resolveAliasIds(personId: string, visited = new Set<string>()): Set<string> {
+  if (visited.has(personId)) return visited
+  visited.add(personId)
+  const links = _backend.getSamePersonLinksFor(personId)
+  for (const link of links) {
+    const other = link.idA === personId ? link.idB : link.idA
+    resolveAliasIds(other, visited)
+  }
+  return visited
+}
+
+/**
+ * Returns true if two person IDs are known to refer to the same individual
+ * (directly or transitively via same-person links).
+ */
+export function areAliases(idA: string, idB: string): boolean {
+  if (idA === idB) return true
+  const group = resolveAliasIds(idA)
+  return group.has(idB)
 }
 
 // ─── Store reset (for tests) ──────────────────────────────────────────────────
@@ -302,6 +327,7 @@ export function serialiseGraph(): object {
   for (const a of _backend.getAllAcknowledgements()) acks[a.eventId] = a
   const links: Record<string, SamePersonLink> = {}
   for (const l of _backend.getAllSamePersonLinks()) links[l.eventId] = l
+  // Note: SamePersonLink now uses idA/idB (local person IDs) not pubkeys
   return { relationships: rels, acknowledgements: acks, samePersonLinks: links }
 }
 

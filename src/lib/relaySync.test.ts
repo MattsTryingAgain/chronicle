@@ -118,29 +118,35 @@ describe('ingestEvent', () => {
   })
 
   it('creates person stub from IDENTITY_ANCHOR', () => {
-    const pubkey = 'f'.repeat(64)
+    const personId = 'test-uuid-1234'
+    const claimantHex = 'a'.repeat(64)
     const event = makeEvent({
-      pubkey,
+      pubkey: claimantHex,
       kind: EventKind.IDENTITY_ANCHOR,
-      tags: [['claimed_by', 'a'.repeat(64)], ['v', '1']],
+      tags: [['person_id', personId], ['claimed_by', claimantHex], ['v', '1']],
     })
     ingestEvent(event)
-    const person = store.getPerson(pubkey)
+    const person = store.getPerson(personId)
     expect(person).toBeDefined()
-    expect(person!.pubkey).toBe(pubkey)
+    expect(person!.id).toBe(personId)
     // claimedBy is stored on the raw event; Person type doesn't carry it
   })
 
   it('does not overwrite existing person from IDENTITY_ANCHOR', () => {
-    const pubkey = 'e'.repeat(64)
-    store.upsertPerson({ pubkey, displayName: 'Existing Name', isLiving: false, createdAt: 0 })
-    const event = makeEvent({ pubkey, kind: EventKind.IDENTITY_ANCHOR })
+    const personId = 'test-uuid-existing'
+    const claimantHex = 'e'.repeat(64)
+    store.upsertPerson({ id: personId, displayName: 'Existing Name', isLiving: false, createdAt: 0 })
+    const event = makeEvent({
+      pubkey: claimantHex,
+      kind: EventKind.IDENTITY_ANCHOR,
+      tags: [['person_id', personId], ['claimed_by', claimantHex], ['v', '1']],
+    })
     ingestEvent(event)
-    expect(store.getPerson(pubkey)!.displayName).toBe('Existing Name')
+    expect(store.getPerson(personId)!.displayName).toBe('Existing Name')
   })
 
   it('ingests FACT_CLAIM and stores it', () => {
-    const subject = '1'.repeat(64)
+    const subject = 'test-person-uuid-1'
     const event = makeFactClaimEvent(subject, 'born', '1930')
     ingestEvent(event)
     const claims = store.getClaimsForPerson(subject)
@@ -151,7 +157,7 @@ describe('ingestEvent', () => {
 
   it('FACT_CLAIM with field=name updates person displayName', () => {
     const subject = '2'.repeat(64)
-    store.upsertPerson({ pubkey: subject, displayName: 'Unknown', isLiving: false, createdAt: 0 })
+    store.upsertPerson({ id: subject, displayName: 'Unknown', isLiving: false, createdAt: 0 })
     const event = makeFactClaimEvent(subject, 'name', 'John Smith')
     ingestEvent(event)
     expect(store.getPerson(subject)!.displayName).toBe('John Smith')
@@ -232,7 +238,7 @@ describe('startSync', () => {
 
   it('ingests events received via subscription', () => {
     const subject = '5'.repeat(64)
-    store.upsertPerson({ pubkey: subject, displayName: 'Bob', isLiving: false, createdAt: 0 })
+    store.upsertPerson({ id: subject, displayName: 'Bob', isLiving: false, createdAt: 0 })
 
     const client = makeMockClient()
     startSync(client as never)
@@ -279,7 +285,7 @@ describe('fetchOnConnect', () => {
   it('counts received and ingested events', async () => {
     vi.useFakeTimers()
     const subject = '7'.repeat(64)
-    store.upsertPerson({ pubkey: subject, displayName: 'Dave', isLiving: false, createdAt: 0 })
+    store.upsertPerson({ id: subject, displayName: 'Dave', isLiving: false, createdAt: 0 })
 
     const client = makeMockClient()
     const promise = fetchOnConnect(client as never)
@@ -304,7 +310,7 @@ describe('fetchOnConnect', () => {
   it('counts duplicate as received but not ingested', async () => {
     vi.useFakeTimers()
     const subject = '8'.repeat(64)
-    store.upsertPerson({ pubkey: subject, displayName: 'Eve', isLiving: false, createdAt: 0 })
+    store.upsertPerson({ id: subject, displayName: 'Eve', isLiving: false, createdAt: 0 })
 
     const event = makeFactClaimEvent(subject, 'born', '1925')
     // Pre-store the event as if already known

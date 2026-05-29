@@ -44,8 +44,8 @@ function makeRel(
   return {
     eventId: `evt-${idCounter}`,
     claimantPubkey: subject,
-    subjectPubkey: subject,
-    relatedPubkey: related,
+    subjectId: subject,
+    relatedId: related,
     relationship: rel,
     sensitive: false,
     createdAt: 1_000_000 + idCounter,

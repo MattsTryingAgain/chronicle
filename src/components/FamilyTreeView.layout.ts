@@ -44,28 +44,28 @@ function normaliseEdges(edges: GraphEdge[]): NormalisedEdges {
 
   for (const e of edges) {
     if (e.relationship === 'parent') {
-      const key = pairKey(e.fromPubkey, e.toPubkey)
+      const key = pairKey(e.fromId, e.toId)
       if (!pcMap.has(key)) {
-        pcMap.set(key, { parent: e.fromPubkey, child: e.toPubkey, sensitive: e.sensitive })
+        pcMap.set(key, { parent: e.fromId, child: e.toId, sensitive: e.sensitive })
       }
     } else if (e.relationship === 'child') {
-      const key = pairKey(e.fromPubkey, e.toPubkey)
+      const key = pairKey(e.fromId, e.toId)
       if (!pcMap.has(key)) {
-        pcMap.set(key, { parent: e.toPubkey, child: e.fromPubkey, sensitive: e.sensitive })
+        pcMap.set(key, { parent: e.toId, child: e.fromId, sensitive: e.sensitive })
       }
     } else if (e.relationship === 'spouse') {
-      const key = pairKey(e.fromPubkey, e.toPubkey)
+      const key = pairKey(e.fromId, e.toId)
       if (!spouseMap.has(key)) {
         spouseMap.set(key, {
-          a: e.fromPubkey, b: e.toPubkey,
+          a: e.fromId, b: e.toId,
           sensitive: e.sensitive,
           status: e.meta?.status,
         })
       }
     } else if (e.relationship === 'sibling') {
-      const key = pairKey(e.fromPubkey, e.toPubkey)
+      const key = pairKey(e.fromId, e.toId)
       if (!sibMap.has(key)) {
-        sibMap.set(key, { a: e.fromPubkey, b: e.toPubkey })
+        sibMap.set(key, { a: e.fromId, b: e.toId })
       }
     }
   }

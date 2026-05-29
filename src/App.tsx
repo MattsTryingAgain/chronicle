@@ -162,17 +162,17 @@ function MainShell() {
     if (rels.length === 0) return
     if (graphRoot) {
       const rootHasRels = rels.some(r =>
-        r.subjectPubkey === graphRoot || r.relatedPubkey === graphRoot
+        r.subjectId === graphRoot || r.relatedId === graphRoot
       )
       if (!rootHasRels) {
-        setGraphRoot(rels[0].subjectPubkey)
+        setGraphRoot(rels[0].subjectId)
       }
     } else {
       // Auto-set root on first sync that delivers relationships
       const hasOwnRels = rels.some(r =>
-        r.subjectPubkey === session.npub || r.relatedPubkey === session.npub
+        r.subjectId === session.npub || r.relatedId === session.npub
       )
-      setGraphRoot(hasOwnRels ? session.npub : rels[0].subjectPubkey)
+      setGraphRoot(hasOwnRels ? session.npub : rels[0].subjectId)
     }
   }, [syncVersion])  // eslint-disable-line react-hooks/exhaustive-deps
   const [showVersionBanner, setShowVersionBanner] = useState(false)
@@ -210,12 +210,12 @@ function MainShell() {
                   // otherwise find the first person in the graph who does.
                   const rels = getAllRelationships()
                   const hasRels = rels.some(r =>
-                    r.subjectPubkey === session.npub || r.relatedPubkey === session.npub
+                    r.subjectId === session.npub || r.relatedId === session.npub
                   )
                   if (hasRels) {
                     setGraphRoot(session.npub)
                   } else {
-                    const firstConnected = rels[0]?.subjectPubkey ?? session.npub
+                    const firstConnected = rels[0]?.subjectId ?? session.npub
                     setGraphRoot(firstConnected)
                   }
                 }

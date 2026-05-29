@@ -77,23 +77,6 @@ export function generateUserKeyMaterial(): KeyMaterial {
   return deriveKeyMaterialFromMnemonic(mnemonic)
 }
 
-// ─── Ancestor keypair ─────────────────────────────────────────────────────────
-
-export interface AncestorKeyPair {
-  npub: string
-  nsec: string
-}
-
-export function generateAncestorKeyPair(): AncestorKeyPair {
-  const privKeyBytes = crypto.getRandomValues(new Uint8Array(32))
-  const pubKeyBytes = schnorr.getPublicKey(privKeyBytes)
-
-  return {
-    npub: nip19.npubEncode(bytesToHex(pubKeyBytes)),
-    nsec: nip19.nsecEncode(privKeyBytes),
-  }
-}
-
 // ─── bech32 encode / decode ───────────────────────────────────────────────────
 
 export function npubToHex(npub: string): string {

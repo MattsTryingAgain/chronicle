@@ -14,7 +14,6 @@
  */
 
 import type { Person, FactClaim, FactField } from '../types/chronicle'
-import { generateAncestorKeyPair } from './keys'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -90,16 +89,16 @@ function groupRecords(lines: GedLine[]): GedRecord[] {
 // ─── INDI parser ──────────────────────────────────────────────────────────────
 
 function parseIndi(record: GedRecord, claimantNpub: string): ImportedPerson {
-  const kp = generateAncestorKeyPair()
+  const personId = crypto.randomUUID()
   const now = Math.floor(Date.now() / 1000)
   let claimIdx = 0
 
   function nextId(field: string): string {
-    return `gedcom-import-${kp.npub}-${field}-${claimIdx++}`
+    return `gedcom-import-${personId}-${field}-${claimIdx++}`
   }
 
   const person: Person = {
-    pubkey: kp.npub,
+    id: personId,
     displayName: '',
     isLiving: false,
     createdAt: now,
@@ -112,7 +111,7 @@ function parseIndi(record: GedRecord, claimantNpub: string): ImportedPerson {
     claims.push({
       eventId: nextId(field),
       claimantPubkey: claimantNpub,
-      subjectPubkey: kp.npub,
+      subjectId: personId,
       field,
       value: value.trim(),
       evidence,

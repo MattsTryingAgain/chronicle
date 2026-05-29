@@ -622,8 +622,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           createdAt: Math.floor(Date.now() / 1000),
         }
         store.setIdentity(identity)
-        store.upsertPerson({
-          pubkey: km.npub,
+        store.upsertPerson({ id: km.npub,
           displayName,
           isLiving: true,
           createdAt: Math.floor(Date.now() / 1000),
@@ -667,8 +666,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         createdAt: Math.floor(Date.now() / 1000),
       }
       store.setIdentity(identity)
-      store.upsertPerson({
-        pubkey: km.npub,
+      store.upsertPerson({ id: km.npub,
         displayName,
         isLiving: true,
         createdAt: Math.floor(Date.now() / 1000),
@@ -750,8 +748,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const ev = buildRelationshipClaim({
         claimantNpub: sess.npub,
         claimantNsec: sess.nsec,
-        subjectNpub: rel.subjectPubkey,
-        relatedNpub: rel.relatedPubkey,
+        subjectId: rel.subjectId,
+        relatedId: rel.relatedId,
         relationship: rel.relationship,
         sensitive: rel.sensitive,
       })

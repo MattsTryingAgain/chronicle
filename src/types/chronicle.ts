@@ -87,9 +87,29 @@ export interface ChronicleEvent {
 // ─── Person ──────────────────────────────────────────────────────────────────
 
 export interface Person {
-  pubkey: string       // npub1... — stable identifier
+  /** Stable identifier.
+   *  - For the logged-in user: their npub1... bech32 session key.
+   *  - For ancestors: a UUID v4 string (e.g. "550e8400-e29b-41d4-a716-446655440000").
+   *  Never use this field for Nostr signing — use session.npub for that. */
+  id: string
   displayName: string
   isLiving: boolean
+  createdAt: number
+}
+
+/**
+ * Records that two local person IDs refer to the same real individual.
+ * Each instance keeps its own ID for an ancestor but also records all
+ * known aliases from connected users, together with the creator's npub.
+ */
+export interface PersonAlias {
+  /** The local person ID this alias is attached to. */
+  localId: string
+  /** The remote person ID used by the other instance. */
+  remoteId: string
+  /** npub of the user who created the remote record. */
+  creatorNpub: string
+  /** unix timestamp when this alias was recorded. */
   createdAt: number
 }
 
@@ -107,7 +127,7 @@ export type FactField =
 export interface FactClaim {
   eventId: string
   claimantPubkey: string    // npub1...
-  subjectPubkey: string     // npub1...
+  subjectId: string        // person ID (UUID for ancestors, npub for living user)
   field: FactField
   value: string
   evidence?: string

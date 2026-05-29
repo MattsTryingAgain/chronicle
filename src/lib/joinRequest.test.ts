@@ -8,19 +8,20 @@ import {
   parseJoinAccept,
   JoinRequestQueue,
 } from './joinRequest.js'
-import { generateAncestorKeyPair, npubToHex } from './keys.js'
+import { npubToHex } from './keys.js'
 
 const RELAY = 'wss://relay.example.com'
+const KP_A = { npub: 'npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqzqujme', nsec: 'nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw' }  // target / requester
+const KP_B = { npub: 'npub1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygse4sl3h', nsec: 'nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw' }  // sender of request
+const KP_C = { npub: 'npub1yg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3q2pw2gm', nsec: 'nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw' }  // sender of accept
 
 function makeRawRequest(overrides: Partial<{
   kind: number; pubkey: string; tags: string[][]; created_at: number; id: string
 }> = {}) {
-  const kp = generateAncestorKeyPair()
-  const targetKp = generateAncestorKeyPair()
   return {
     kind: KIND_JOIN_REQUEST,
-    pubkey: npubToHex(kp.npub),
-    tags: buildJoinRequestTags(targetKp.npub, RELAY, 'Alice'),
+    pubkey: npubToHex(KP_B.npub),
+    tags: buildJoinRequestTags(KP_A.npub, RELAY, 'Alice'),
     created_at: 1_000_000,
     id: 'event-id-' + Math.random().toString(36).slice(2),
     ...overrides,
@@ -30,12 +31,10 @@ function makeRawRequest(overrides: Partial<{
 function makeRawAccept(requestEventId: string, overrides: Partial<{
   kind: number; pubkey: string; tags: string[][]; created_at: number
 }> = {}) {
-  const kp = generateAncestorKeyPair()
-  const requesterKp = generateAncestorKeyPair()
   return {
     kind: KIND_JOIN_ACCEPT,
-    pubkey: npubToHex(kp.npub),
-    tags: buildJoinAcceptTags(requesterKp.npub, requestEventId, RELAY),
+    pubkey: npubToHex(KP_C.npub),
+    tags: buildJoinAcceptTags(KP_A.npub, requestEventId, RELAY),
     created_at: 1_000_001,
     ...overrides,
   }
@@ -43,9 +42,8 @@ function makeRawAccept(requestEventId: string, overrides: Partial<{
 
 describe('buildJoinRequestTags', () => {
   it('includes target, relay, display_name, v', () => {
-    const kp = generateAncestorKeyPair()
-    const tags = buildJoinRequestTags(kp.npub, RELAY, 'Alice')
-    expect(tags.find(t => t[0] === 'target')?.[1]).toBe(kp.npub)
+    const tags = buildJoinRequestTags(KP_A.npub, RELAY, 'Alice')
+    expect(tags.find(t => t[0] === 'target')?.[1]).toBe(KP_A.npub)
     expect(tags.find(t => t[0] === 'relay')?.[1]).toBe(RELAY)
     expect(tags.find(t => t[0] === 'display_name')?.[1]).toBe('Alice')
     expect(tags.find(t => t[0] === 'v')?.[1]).toBe('1')
@@ -54,9 +52,8 @@ describe('buildJoinRequestTags', () => {
 
 describe('buildJoinAcceptTags', () => {
   it('includes requester, request_event, relay, v', () => {
-    const kp = generateAncestorKeyPair()
-    const tags = buildJoinAcceptTags(kp.npub, 'req-event-123', RELAY)
-    expect(tags.find(t => t[0] === 'requester')?.[1]).toBe(kp.npub)
+    const tags = buildJoinAcceptTags(KP_A.npub, 'req-event-123', RELAY)
+    expect(tags.find(t => t[0] === 'requester')?.[1]).toBe(KP_A.npub)
     expect(tags.find(t => t[0] === 'request_event')?.[1]).toBe('req-event-123')
     expect(tags.find(t => t[0] === 'relay')?.[1]).toBe(RELAY)
     expect(tags.find(t => t[0] === 'v')?.[1]).toBe('1')
@@ -97,10 +94,9 @@ describe('parseJoinRequest', () => {
   })
 
   it('sets requesterNpub from pubkey', () => {
-    const kp = generateAncestorKeyPair()
-    const raw = makeRawRequest({ pubkey: npubToHex(kp.npub) })
+    const raw = makeRawRequest({ pubkey: npubToHex(KP_B.npub) })
     const req = parseJoinRequest(raw)
-    expect(req!.requesterNpub).toBe(kp.npub)
+    expect(req!.requesterNpub).toBe(KP_B.npub)
   })
 })
 

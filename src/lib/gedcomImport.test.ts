@@ -129,13 +129,14 @@ describe('importGedcom — basic parsing', () => {
     }
   })
 
-  it('generates a unique npub for each person', () => {
+  it('generates a unique UUID for each person', () => {
     const result = importGedcom(TWO_PERSON_GEDCOM, CLAIMANT)
-    const p1 = result.persons[0].person.pubkey
-    const p2 = result.persons[1].person.pubkey
+    const p1 = result.persons[0].person.id
+    const p2 = result.persons[1].person.id
     expect(p1).not.toBe(p2)
-    expect(p1).toMatch(/^npub1/)
-    expect(p2).toMatch(/^npub1/)
+    // UUIDs v4 format
+    expect(p1).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4/)
+    expect(p2).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4/)
   })
 
   it('parses two INDI records', () => {

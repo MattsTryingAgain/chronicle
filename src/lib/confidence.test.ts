@@ -18,7 +18,7 @@ function makeClaim(overrides: Partial<FactClaim> = {}): FactClaim {
   return {
     eventId: 'evt-1',
     claimantPubkey: 'npub1alice',
-    subjectPubkey: 'npub1grandad',
+    subjectId: 'npub1grandad',
     field: 'born',
     value: '1930',
     evidence: undefined,

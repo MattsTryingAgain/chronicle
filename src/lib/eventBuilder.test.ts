@@ -82,7 +82,7 @@ describe('buildFactClaim', () => {
     const event = buildFactClaim({
       claimantNpub: alice.npub,
       claimantNsec: alice.nsec,
-      subjectNpub: ancestor.npub,
+      subjectId: ancestor.npub,
       field: 'born',
       value: '1930',
     })
@@ -96,7 +96,7 @@ describe('buildFactClaim', () => {
     const event = buildFactClaim({
       claimantNpub: alice.npub,
       claimantNsec: alice.nsec,
-      subjectNpub: ancestor.npub,
+      subjectId: ancestor.npub,
       field: 'born',
       value: '1930',
       evidence: 'family bible',
@@ -108,7 +108,7 @@ describe('buildFactClaim', () => {
     const event = buildFactClaim({
       claimantNpub: alice.npub,
       claimantNsec: alice.nsec,
-      subjectNpub: ancestor.npub,
+      subjectId: ancestor.npub,
       field: 'bio',
       value: 'private notes',
       tier: 'family',
@@ -120,7 +120,7 @@ describe('buildFactClaim', () => {
     const event = buildFactClaim({
       claimantNpub: alice.npub,
       claimantNsec: alice.nsec,
-      subjectNpub: ancestor.npub,
+      subjectId: ancestor.npub,
       field: 'born',
       value: '1930',
       tier: 'public',
@@ -134,7 +134,7 @@ describe('buildFactClaim', () => {
       const event = buildFactClaim({
         claimantNpub: alice.npub,
         claimantNsec: alice.nsec,
-        subjectNpub: ancestor.npub,
+        subjectId: ancestor.npub,
         field,
         value: 'test',
       })
@@ -190,8 +190,8 @@ describe('buildRelationshipClaim', () => {
     const event = buildRelationshipClaim({
       claimantNpub: alice.npub,
       claimantNsec: alice.nsec,
-      subjectNpub: ancestor.npub,
-      relatedNpub: alice.npub,
+      subjectId: ancestor.npub,
+      relatedId: alice.npub,
       relationship: 'grandchild',
       relayUrl: 'wss://relay.example',
     })
@@ -207,8 +207,8 @@ describe('buildRelationshipClaim', () => {
     const event = buildRelationshipClaim({
       claimantNpub: alice.npub,
       claimantNsec: alice.nsec,
-      subjectNpub: ancestor.npub,
-      relatedNpub: alice.npub,
+      subjectId: ancestor.npub,
+      relatedId: alice.npub,
       relationship: 'child',
       sensitive: true,
       sensitiveSubtype: 'adopted',
@@ -330,7 +330,7 @@ describe('getTag / getTags', () => {
     const event = buildFactClaim({
       claimantNpub: alice.npub,
       claimantNsec: alice.nsec,
-      subjectNpub: ancestor.npub,
+      subjectId: ancestor.npub,
       field: 'born',
       value: '1930',
     })

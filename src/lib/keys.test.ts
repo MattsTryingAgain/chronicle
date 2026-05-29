@@ -11,7 +11,6 @@ import {
   validateUserMnemonic,
   deriveKeyMaterialFromMnemonic,
   generateUserKeyMaterial,
-  generateAncestorKeyPair,
   npubToHex,
   nsecToHex,
   hexToNpub,
@@ -122,24 +121,24 @@ describe('generateUserKeyMaterial', () => {
   })
 })
 
-// ─── Ancestor keypair ─────────────────────────────────────────────────────────
+// ─── Ancestor ID (UUID) ──────────────────────────────────────────────────────
 
-describe('generateAncestorKeyPair', () => {
-  it('returns bech32 npub and nsec', () => {
-    const kp = generateAncestorKeyPair()
-    expect(kp.npub).toMatch(/^npub1/)
-    expect(kp.nsec).toMatch(/^nsec1/)
+describe('ancestor person IDs', () => {
+  it('crypto.randomUUID produces a valid UUID v4', () => {
+    const id = crypto.randomUUID()
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   })
 
-  it('generates unique pairs', () => {
-    const a = generateAncestorKeyPair()
-    const b = generateAncestorKeyPair()
-    expect(a.npub).not.toBe(b.npub)
+  it('generates unique IDs on each call', () => {
+    const a = crypto.randomUUID()
+    const b = crypto.randomUUID()
+    expect(a).not.toBe(b)
   })
 
-  it('npub and nsec are consistent with each other', () => {
-    const kp = generateAncestorKeyPair()
-    expect(nsecToNpub(kp.nsec)).toBe(kp.npub)
+  it('produces unique IDs for each ancestor', () => {
+    const ids = Array.from({ length: 5 }, () => crypto.randomUUID())
+    const unique = new Set(ids)
+    expect(unique.size).toBe(5)
   })
 })
 

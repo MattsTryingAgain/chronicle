@@ -32,7 +32,7 @@ const makeClaim = (
 ): FactClaim => ({
   eventId: nextId(),
   claimantPubkey: npub(99),
-  subjectPubkey: subject,
+  subjectId: subject,
   field,
   value,
   createdAt: 1_000_000,
@@ -43,8 +43,8 @@ const makeClaim = (
 const makeLink = (a: string, b: string, retracted = false): SamePersonLink => ({
   eventId: nextId(),
   claimantPubkey: a,
-  pubkeyA: a,
-  pubkeyB: b,
+  idA: a,
+  idB: b,
   createdAt: 1_000_000,
   retracted,
 })

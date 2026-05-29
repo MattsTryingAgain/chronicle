@@ -7,13 +7,14 @@ import {
   TrustRevocationStore,
   type TrustRevocation,
 } from './trustRevocation.js'
-import { generateAncestorKeyPair, npubToHex } from './keys.js'
+import { npubToHex } from './keys.js'
+
+const REVOKER_NPUB = 'npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqzqujme'
 
 function makeRaw(revokedNpub: string, reason = 'not a real family member', overrides: Record<string, unknown> = {}) {
-  const kp = generateAncestorKeyPair()
   return {
     kind: KIND_TRUST_REVOCATION,
-    pubkey: npubToHex(kp.npub),
+    pubkey: npubToHex(REVOKER_NPUB),
     tags: buildTrustRevocationTags(revokedNpub, reason),
     created_at: 1_000_000,
     id: 'rev-' + Math.random().toString(36).slice(2),
@@ -22,9 +23,8 @@ function makeRaw(revokedNpub: string, reason = 'not a real family member', overr
 }
 
 function makeRevocation(revokedNpub: string, endorsedBy: string[] = []): TrustRevocation {
-  const kp = generateAncestorKeyPair()
   return {
-    revokerNpub: kp.npub,
+    revokerNpub: REVOKER_NPUB,
     revokedNpub,
     reason: 'test',
     createdAt: 1_000_000,
@@ -33,8 +33,8 @@ function makeRevocation(revokedNpub: string, endorsedBy: string[] = []): TrustRe
   }
 }
 
-const BAD_ACTOR = 'npub1' + 'b'.repeat(58)
-const ENDORSER  = 'npub1' + 'c'.repeat(58)
+const BAD_ACTOR = 'npub1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygse4sl3h'
+const ENDORSER  = 'npub1yg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3q2pw2gm'
 
 describe('buildTrustRevocationTags', () => {
   it('includes revokes_trust, reason, v', () => {
@@ -78,10 +78,9 @@ describe('parseTrustRevocation', () => {
   })
 
   it('sets revokerNpub from pubkey', () => {
-    const kp = generateAncestorKeyPair()
-    const raw = makeRaw(BAD_ACTOR, 'test', { pubkey: npubToHex(kp.npub) })
+    const raw = makeRaw(BAD_ACTOR, 'test', { pubkey: npubToHex(REVOKER_NPUB) })
     const rev = parseTrustRevocation(raw)
-    expect(rev!.revokerNpub).toBe(kp.npub)
+    expect(rev!.revokerNpub).toBe(REVOKER_NPUB)
   })
 })
 

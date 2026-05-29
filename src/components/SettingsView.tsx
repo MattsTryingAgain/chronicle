@@ -328,7 +328,7 @@ export function SettingsView() {
 
   const handleExportGedcom = useCallback(() => {
     const exportable: ExportablePerson[] = store.getAllPersons().map(p => ({
-      person: p, claims: store.getClaimsForPerson(p.pubkey),
+      person: p, claims: store.getClaimsForPerson(p.id),
     }))
     downloadFile(generateGedcom(exportable), 'chronicle-export.ged', 'text/plain;charset=utf-8')
   }, [])
@@ -336,7 +336,7 @@ export function SettingsView() {
   const handleExportArchive = useCallback(() => {
     const identity = store.getIdentity()
     const exportable: ExportablePerson[] = store.getAllPersons().map(p => ({
-      person: p, claims: store.getClaimsForPerson(p.pubkey),
+      person: p, claims: store.getClaimsForPerson(p.id),
     }))
     downloadFile(
       generateArchive(

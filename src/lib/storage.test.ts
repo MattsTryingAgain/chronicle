@@ -97,14 +97,14 @@ describe('MemoryStore — persons', () => {
   })
 
   const alice: Person = {
-    pubkey: 'npub1alice',
+    id: 'npub1alice',
     displayName: 'Alice O\'Brien',
     isLiving: true,
     createdAt: 1_000,
   }
 
   const thomas: Person = {
-    pubkey: 'npub1thomas',
+    id: 'npub1thomas',
     displayName: 'Thomas O\'Brien',
     isLiving: false,
     createdAt: 900,
@@ -158,7 +158,7 @@ describe('MemoryStore — claims', () => {
   const claim: FactClaim = {
     eventId: 'evt001',
     claimantPubkey: 'npub1alice',
-    subjectPubkey: 'npub1thomas',
+    subjectId: 'npub1thomas',
     field: 'born',
     value: '1930',
     createdAt: 1_000,
@@ -235,13 +235,13 @@ describe('MemoryStore — serialise / deserialise', () => {
   it('round-trips store state through JSON', () => {
     const store = new MemoryStore()
     const person: Person = {
-      pubkey: 'npub1x',
+      id: 'npub1x',
       displayName: 'Test Person',
       isLiving: false,
       createdAt: 500,
     }
     store.upsertPerson(person)
-    store.addRecoveryContact({ pubkey: 'npub1r', displayName: 'Recovery', addedAt: 100 })
+    store.addRecoveryContact({ id: 'npub1r', displayName: 'Recovery', addedAt: 100 })
 
     const json = store.serialise()
     const restored = MemoryStore.deserialise(json)

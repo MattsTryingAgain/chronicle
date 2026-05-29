@@ -7,7 +7,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { store } from '../lib/storage'
-import { getAllSamePersonLinks, resolveCanonicalPubkey, addSamePersonLink } from '../lib/graph'
+import { getAllSamePersonLinks, addSamePersonLink, areAliases } from '../lib/graph'
 import { ProfileCard } from './ProfileCard'
 import { AddPersonModal } from './AddPersonModal'
 import { useApp } from '../context/AppContext'
@@ -29,7 +29,7 @@ function PersonAvatar({ name }: { name: string }) {
 }
 
 function PersonListItem({ person, onClick }: { person: Person; onClick: () => void }) {
-  const claims = store.getClaimsForPerson(person.pubkey)
+  const claims = store.getClaimsForPerson(person.id)
   const bornClaim   = claims.filter(c => c.field === 'born'       && !c.retracted).sort((a,b) => b.confidenceScore - a.confidenceScore)[0]
   const diedClaim   = claims.filter(c => c.field === 'died'       && !c.retracted).sort((a,b) => b.confidenceScore - a.confidenceScore)[0]
   const placeClaim  = claims.filter(c => c.field === 'birthplace' && !c.retracted).sort((a,b) => b.confidenceScore - a.confidenceScore)[0]
@@ -72,19 +72,27 @@ export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string)
   const refresh = useCallback(() => forceUpdate(n => n + 1), [])
 
   // Filter out persons that are the non-canonical entry in a same_person_link.
-  // resolveCanonicalPubkey follows the link chain and returns the canonical end;
+  // resolveAliasIds follows the link chain and returns the canonical end;
   // any person whose pubkey != canonical(pubkey) is a secondary duplicate.
   // This is deterministic regardless of which instance created which record.
   const allLinks = getAllSamePersonLinks()
   const hiddenByLink = new Set<string>()
   if (allLinks.length > 0) {
-    for (const p of store.getAllPersons()) {
-      const canonical = resolveCanonicalPubkey(p.pubkey)
-      if (canonical !== p.pubkey) hiddenByLink.add(p.pubkey)
+    const allPersons = store.getAllPersons()
+    for (const p of allPersons) {
+      // Hide if any other person has this ID as an alias (i.e. this is the secondary record)
+      for (const other of allPersons) {
+        if (other.id === p.id) continue
+        if (areAliases(other.id, p.id) && other.id < p.id) {
+          // other is "primary" (lexicographically smaller ID) — hide p
+          hiddenByLink.add(p.id)
+          break
+        }
+      }
     }
   }
 
-  const persons = store.searchPersons(query).filter(p => !hiddenByLink.has(p.pubkey))
+  const persons = store.searchPersons(query).filter(p => !hiddenByLink.has(p.id))
   const selectedPerson = selectedPubkey ? store.getPerson(selectedPubkey) : null
   const selectedClaims = selectedPubkey ? store.getClaimsForPerson(selectedPubkey) : []
   const selectedEndorsements = selectedClaims.flatMap(c =>
@@ -101,7 +109,7 @@ export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string)
   const handlePersonSaved = useCallback((person: Person) => {
     setShowAddModal(false)
     setEditingPubkey(null)
-    setSelectedPubkey(person.pubkey)
+    setSelectedPubkey(person.id)
     refresh()
   }, [refresh])
 
@@ -144,23 +152,23 @@ export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string)
                 </p>
                 <div className="person-list" style={{ maxHeight: 240, overflowY: 'auto' }}>
                   {store.getAllPersons()
-                    .filter(p => p.pubkey !== selectedPubkey && resolveCanonicalPubkey(p.pubkey) === p.pubkey)
+                    .filter(p => p.id !== selectedPubkey && !areAliases(p.id, selectedPubkey ?? ''))
                     .map(p => (
                       <div
-                        key={p.pubkey}
+                        key={p.id}
                         className="person-list-item"
                         style={{ cursor: 'pointer', padding: '8px 12px' }}
                         onClick={() => {
                           if (!session) return
                           const event = buildSamePersonLink(
                             session.npub, session.nsec,
-                            selectedPubkey!, p.pubkey,
+                            selectedPubkey!, p.id,
                           )
                           publishEvent(event)
                           addSamePersonLink({
                             eventId: event.id,
-                            pubkeyA: selectedPubkey!,
-                            pubkeyB: p.pubkey,
+                            idA: selectedPubkey!,
+                            idB: p.id,
                             claimantPubkey: session.npub,
                             createdAt: event.created_at,
                             retracted: false,
@@ -172,7 +180,7 @@ export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string)
                       >
                         <strong>{p.displayName}</strong>
                         <span style={{ fontSize: 12, color: 'var(--ink-muted)', marginLeft: 8 }}>
-                          {store.getClaimsForPerson(p.pubkey).find(c => c.field === 'born')?.value ?? ''}
+                          {store.getClaimsForPerson(p.id).find(c => c.field === 'born')?.value ?? ''}
                         </span>
                       </div>
                     ))
@@ -241,9 +249,9 @@ export function TreeView({ onSelectPerson }: { onSelectPerson?: (pubkey: string)
               <div className="person-list">
                 {persons.map(p => (
                   <PersonListItem
-                    key={p.pubkey}
+                    key={p.id}
                     person={p}
-                    onClick={() => setSelectedPubkey(p.pubkey)}
+                    onClick={() => setSelectedPubkey(p.id)}
                   />
                 ))}
               </div>

@@ -6,10 +6,10 @@ import {
   type ContactList,
   type Contact,
 } from './contactList.js'
-import { generateAncestorKeyPair, nsecToHex } from './keys.js'
+import { nsecToHex } from './keys.js'
 
 function makeNsecHex(): string {
-  const kp = generateAncestorKeyPair()
+  const kp = { npub: 'npub1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygse4sl3h', nsec: 'nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw' }
   return nsecToHex(kp.nsec)
 }
 
@@ -36,7 +36,8 @@ describe('contactList encryption', () => {
 
   it('decryption fails with wrong key', () => {
     const nsecHex = makeNsecHex()
-    const wrongHex = makeNsecHex()
+    // Use a different 32-byte hex as the wrong key
+    const wrongHex = 'abcd'.repeat(16)  // 64 hex chars, different from nsecHex
     const list: ContactList = { contacts: [], version: 1 }
     const ct = encryptContactList(list, nsecHex)
     expect(decryptContactList(ct, wrongHex)).toBeNull()
@@ -128,7 +129,7 @@ describe('ContactListManager', () => {
 
   it('fromEncrypted returns null for bad key', () => {
     const nsecHex = makeNsecHex()
-    const wrongHex = makeNsecHex()
+    const wrongHex = 'deadbeef'.repeat(8)  // 64 hex chars, different key
     const mgr = new ContactListManager()
     const ct = mgr.encrypt(nsecHex)
     expect(ContactListManager.fromEncrypted(ct, wrongHex)).toBeNull()

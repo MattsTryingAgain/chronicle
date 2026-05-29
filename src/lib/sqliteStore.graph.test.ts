@@ -21,8 +21,8 @@ describe('SqliteStore — relationships', () => {
   const rel: RelationshipClaim = {
     eventId: 'rel001',
     claimantPubkey: 'npub1claimer',
-    subjectPubkey: 'npub1alice',
-    relatedPubkey: 'npub1bob',
+    subjectId: 'npub1alice',
+    relatedId: 'npub1bob',
     relationship: 'parent',
     sensitive: false,
     createdAt: 1_000_000,
@@ -32,8 +32,8 @@ describe('SqliteStore — relationships', () => {
   it('adds and retrieves a relationship by eventId', () => {
     store.addRelationship(rel)
     const r = store.getRelationship('rel001')
-    expect(r?.subjectPubkey).toBe('npub1alice')
-    expect(r?.relatedPubkey).toBe('npub1bob')
+    expect(r?.subjectId).toBe('npub1alice')
+    expect(r?.relatedId).toBe('npub1bob')
     expect(r?.relationship).toBe('parent')
     expect(r?.sensitive).toBe(false)
     expect(r?.retracted).toBe(false)
@@ -139,8 +139,8 @@ describe('SqliteStore — same-person links', () => {
   const link: SamePersonLink = {
     eventId: 'spl001',
     claimantPubkey: 'npub1claimer',
-    pubkeyA: 'npub1alice',
-    pubkeyB: 'npub1alice2',
+    idA: 'npub1alice',
+    idB: 'npub1alice2',
     createdAt: 1_000_002,
     retracted: false,
   }
@@ -167,7 +167,7 @@ describe('SqliteStore — same-person links', () => {
 
   it('getAllSamePersonLinks returns all including retracted', () => {
     store.addSamePersonLink(link)
-    store.addSamePersonLink({ ...link, eventId: 'spl002', pubkeyA: 'npub1bob', pubkeyB: 'npub1bob2' })
+    store.addSamePersonLink({ ...link, eventId: 'spl002', idA: 'npub1bob', idB: 'npub1bob2' })
     expect(store.getAllSamePersonLinks()).toHaveLength(2)
   })
 })
@@ -181,7 +181,7 @@ describe('SqliteStore — media cache', () => {
     mimeType: 'image/jpeg',
     size: 1024,
     tier: 'public' as const,
-    subjectNpub: 'npub1alice',
+    subjectId: 'npub1alice',
   }
 
   it('upserts and retrieves a media cache entry', () => {

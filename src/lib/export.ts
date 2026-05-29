@@ -55,7 +55,7 @@ export function generateGedcom(persons: ExportablePerson[]): string {
   lines.push(`1 DATE ${gedcomDate(Date.now())}`)
 
   for (const { person, claims } of persons) {
-    const id = gedcomId(person.pubkey)
+    const id = gedcomId(person.id)
     const activeClaims = claims.filter((c) => !c.retracted)
     const best = bestClaims(activeClaims)
 

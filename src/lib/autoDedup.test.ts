@@ -5,12 +5,12 @@
  *  - scoreMatch: name-only, name+DoB, mismatched DoB
  *  - The reported bug: instance 1 has name+DoB, instance 2 has name only
  *  - findMatchCandidates with same-set comparison (all persons vs all persons)
- *  - resolveCanonicalPubkey-based dedup in the People list
+ *  - resolveAliasIds-based dedup in the People list
  *  - alreadyLinked edge cases
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
-import { _resetGraphStore, addSamePersonLink, resolveCanonicalPubkey } from './graph'
+import { _resetGraphStore, addSamePersonLink, resolveAliasIds } from './graph'
 import { scoreMatch, findMatchCandidates, alreadyLinked } from './treeLinking'
 import type { FactClaim } from '../types/chronicle'
 import type { SamePersonLink } from './graph'
@@ -19,10 +19,10 @@ import type { SamePersonLink } from './graph'
 
 let claimIdCounter = 0
 
-function makeNameClaim(subjectPubkey: string, name: string, claimantPubkey = 'claimant-a'): FactClaim {
+function makeNameClaim(subjectId: string, name: string, claimantPubkey = 'claimant-a'): FactClaim {
   return {
     eventId: `evt-${++claimIdCounter}`,
-    subjectPubkey,
+    subjectId,
     claimantPubkey,
     field: 'name',
     value: name,
@@ -32,10 +32,10 @@ function makeNameClaim(subjectPubkey: string, name: string, claimantPubkey = 'cl
   }
 }
 
-function makeBornClaim(subjectPubkey: string, year: string, claimantPubkey = 'claimant-a'): FactClaim {
+function makeBornClaim(subjectId: string, year: string, claimantPubkey = 'claimant-a'): FactClaim {
   return {
     eventId: `evt-${++claimIdCounter}`,
-    subjectPubkey,
+    subjectId,
     claimantPubkey,
     field: 'born',
     value: year,
@@ -45,11 +45,11 @@ function makeBornClaim(subjectPubkey: string, year: string, claimantPubkey = 'cl
   }
 }
 
-function makeLink(pubkeyA: string, pubkeyB: string, eventId?: string): SamePersonLink {
+function makeLink(idA: string, idB: string, eventId?: string): SamePersonLink {
   return {
-    eventId: eventId ?? `link-${pubkeyA}-${pubkeyB}`,
-    pubkeyA,
-    pubkeyB,
+    eventId: eventId ?? `link-${idA}-${idB}`,
+    idA,
+    idB,
     claimantPubkey: 'claimant-a',
     createdAt: 1_000_000,
     retracted: false,
@@ -151,7 +151,7 @@ describe('findMatchCandidates — same-set comparison', () => {
     const pubkeys = ['pub-a', 'pub-b', 'pub-c']
     const results = findMatchCandidates(pubkeys, pubkeys, claims, { minConfidence: 0.3 })
     expect(results.length).toBeGreaterThan(0)
-    const pair = [results[0].pubkeyA, results[0].pubkeyB].sort()
+    const pair = [results[0].idA, results[0].idB].sort()
     expect(pair).toEqual(['pub-a', 'pub-b'])
   })
 
@@ -163,7 +163,7 @@ describe('findMatchCandidates — same-set comparison', () => {
     const existingLinks: SamePersonLink[] = [makeLink('pub-a', 'pub-b')]
     const pubkeys = ['pub-a', 'pub-b']
     const raw = findMatchCandidates(pubkeys, pubkeys, claims, { minConfidence: 0.3 })
-    const filtered = raw.filter(c => !alreadyLinked(c.pubkeyA, c.pubkeyB, existingLinks))
+    const filtered = raw.filter(c => !alreadyLinked(c.idA, c.idB, existingLinks))
     expect(filtered.length).toBe(0)
   })
 
@@ -189,43 +189,55 @@ describe('findMatchCandidates — same-set comparison', () => {
   })
 })
 
-// ─── resolveCanonicalPubkey — dedup in People list ───────────────────────────
+// ─── resolveAliasIds — alias group resolution ─────────────────────────
 
-describe('resolveCanonicalPubkey — People list dedup', () => {
-  it('returns the same pubkey when no link exists', () => {
-    expect(resolveCanonicalPubkey('pub-a')).toBe('pub-a')
+describe('resolveAliasIds — People list dedup', () => {
+  it('returns a Set with just itself when no link exists', () => {
+    const result = resolveAliasIds('pub-a')
+    expect(result).toBeInstanceOf(Set)
+    expect(result.has('pub-a')).toBe(true)
+    expect(result.size).toBe(1)
   })
 
-  it('canonical is the lexicographically smaller pubkey', () => {
-    addSamePersonLink(makeLink('pub-b', 'pub-a'))
-    // 'pub-a' < 'pub-b' lexicographically
-    expect(resolveCanonicalPubkey('pub-b')).toBe('pub-a')
-    expect(resolveCanonicalPubkey('pub-a')).toBe('pub-a')
+  it('includes both IDs in the alias group when linked', () => {
+    addSamePersonLink(makeLink('pub-a', 'pub-b'))
+    const groupA = resolveAliasIds('pub-a')
+    expect(groupA.has('pub-a')).toBe(true)
+    expect(groupA.has('pub-b')).toBe(true)
+    const groupB = resolveAliasIds('pub-b')
+    expect(groupB.has('pub-a')).toBe(true)
+    expect(groupB.has('pub-b')).toBe(true)
   })
 
-  it('non-canonical persons are correctly identified for hiding', () => {
+  it('non-alias persons are correctly identified by group membership', () => {
     // Simulate: instance 1 → pub-a, instance 2 → pub-b, user confirms link
     addSamePersonLink(makeLink('pub-a', 'pub-b'))
     const persons = [
-      { pubkey: 'pub-a', displayName: 'Alice' },
-      { pubkey: 'pub-b', displayName: 'Alice' }, // duplicate
-      { pubkey: 'pub-c', displayName: 'Bob' },
+      { id: 'pub-a', displayName: 'Alice' },
+      { id: 'pub-b', displayName: 'Alice' }, // alias of pub-a
+      { id: 'pub-c', displayName: 'Bob' },
     ]
-    const hidden = new Set(
-      persons
-        .filter(p => resolveCanonicalPubkey(p.pubkey) !== p.pubkey)
-        .map(p => p.pubkey)
-    )
-    expect(hidden.has('pub-b')).toBe(true)  // pub-a < pub-b → pub-b is secondary
-    expect(hidden.has('pub-a')).toBe(false)
-    expect(hidden.has('pub-c')).toBe(false)
+    // For UI hiding: hide persons whose ID is in another person's alias group
+    // but is not their own local ID. Build a map of alias groups first.
+    const aliasGroups = persons.map(p => ({ id: p.id, group: resolveAliasIds(p.id) }))
+    // pub-a and pub-b are in each other's groups; both groups contain 2 IDs
+    const groupA = aliasGroups.find(g => g.id === 'pub-a')!.group
+    const groupB = aliasGroups.find(g => g.id === 'pub-b')!.group
+    expect(groupA.has('pub-b')).toBe(true)
+    expect(groupB.has('pub-a')).toBe(true)
+    // pub-c is its own group
+    const groupC = aliasGroups.find(g => g.id === 'pub-c')!.group
+    expect(groupC.size).toBe(1)
   })
 
   it('handles chained links (A→B, B→C) without infinite loop', () => {
     addSamePersonLink(makeLink('pub-b', 'pub-a', 'link-1'))
     addSamePersonLink(makeLink('pub-c', 'pub-b', 'link-2'))
-    expect(() => resolveCanonicalPubkey('pub-c')).not.toThrow()
-    expect(() => resolveCanonicalPubkey('pub-a')).not.toThrow()
+    expect(() => resolveAliasIds('pub-c')).not.toThrow()
+    expect(() => resolveAliasIds('pub-a')).not.toThrow()
+    // All three should be in each other's groups
+    const group = resolveAliasIds('pub-c')
+    expect(group.size).toBe(3)
   })
 })
 

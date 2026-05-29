@@ -12,7 +12,7 @@ import {
   addRelationship, getRelationshipsFor, retractRelationship,
   addAcknowledgement, getAcknowledgementsForClaim,
   addSamePersonLink, getSamePersonLinksFor, retractSamePersonLink,
-  traverseGraph, resolveCanonicalPubkey,
+  traverseGraph, resolveAliasIds,
   serialiseGraph, deserialiseGraph,
 } from './graph'
 import { SqliteStore } from './sqliteStore'
@@ -32,8 +32,8 @@ afterEach(() => {
 const makeRel = (id: string, subject: string, related: string): RelationshipClaim => ({
   eventId: id,
   claimantPubkey: 'npub1claimer',
-  subjectPubkey: subject,
-  relatedPubkey: related,
+  subjectId: subject,
+  relatedId: related,
   relationship: 'parent',
   sensitive: false,
   createdAt: 1_000_000,
@@ -69,7 +69,7 @@ describe('graph — SQLite backend', () => {
   it('addSamePersonLink / getSamePersonLinksFor delegates to SQLite', () => {
     const link: SamePersonLink = {
       eventId: 'l1', claimantPubkey: 'npub1claimer',
-      pubkeyA: 'npub1alice', pubkeyB: 'npub1alice2',
+      idA: 'npub1alice', idB: 'npub1alice2',
       createdAt: 1_000_002, retracted: false,
     }
     addSamePersonLink(link)
@@ -80,7 +80,7 @@ describe('graph — SQLite backend', () => {
   it('retractSamePersonLink works via SQLite', () => {
     const link: SamePersonLink = {
       eventId: 'l1', claimantPubkey: 'npub1claimer',
-      pubkeyA: 'npub1alice', pubkeyB: 'npub1alice2',
+      idA: 'npub1alice', idB: 'npub1alice2',
       createdAt: 1_000_002, retracted: false,
     }
     addSamePersonLink(link)
@@ -99,16 +99,20 @@ describe('graph — SQLite backend', () => {
     expect(result.truncated).toBe(false)
   })
 
-  it('resolveCanonicalPubkey works with SQLite backend', () => {
+  it('resolveAliasIds works with SQLite backend', () => {
     const link: SamePersonLink = {
       eventId: 'l1', claimantPubkey: 'npub1claimer',
-      pubkeyA: 'npub1aaa', pubkeyB: 'npub1zzz',
+      idA: 'npub1aaa', idB: 'npub1zzz',
       createdAt: 1_000_002, retracted: false,
     }
     addSamePersonLink(link)
-    // 'npub1aaa' < 'npub1zzz' lexicographically → canonical is npub1aaa
-    expect(resolveCanonicalPubkey('npub1zzz')).toBe('npub1aaa')
-    expect(resolveCanonicalPubkey('npub1aaa')).toBe('npub1aaa')
+    // resolveAliasIds returns a Set of all known IDs in the alias group
+    const groupZzz = resolveAliasIds('npub1zzz')
+    expect(groupZzz.has('npub1aaa')).toBe(true)
+    expect(groupZzz.has('npub1zzz')).toBe(true)
+    const groupAaa = resolveAliasIds('npub1aaa')
+    expect(groupAaa.has('npub1aaa')).toBe(true)
+    expect(groupAaa.has('npub1zzz')).toBe(true)
   })
 
   it('_resetGraphStore reverts to in-memory backend', () => {

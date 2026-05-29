@@ -1262,3 +1262,343 @@ Fix: `pendingMatchVersion` state and the `setPendingMatchHandler` registration m
 ### Gotcha #53 — setPendingMatchHandler must be registered at app shell level
 
 If `setPendingMatchHandler` is registered inside a tab component, it's only active when that tab is mounted. Dedup detection during sync on any other tab will silently drop. Register it in the always-mounted app shell and pass `pendingMatchVersion` down as a prop.
+
+### Relay restart data loss — re-sync button + persistent dismissed matches (v1.0.86)
+
+**Root cause of persistent "Unknown" names and missing data:**
+The embedded relay uses an in-memory event store (Gotcha #44). When the app restarts, the relay loses all events. Instance 1 only pushes its events to connected relays when it first connects. If instance 2's relay restarts while instance 1 is already connected, the push doesn't repeat — instance 2's relay is empty, its subscription delivers nothing, and all persons appear as stubs.
+
+This is why: born year showed (new event, published after relay restart) but name showed "Unknown" (old event, lost in relay restart before the subscription fix).
+
+**Fix — `repushAllEvents()` in AppContext:**
+Re-sends every raw event in the local store to all currently connected relays. Exposed via "↺ Re-sync all my data to connected instances" button in Connect tab (visible when contacts exist). Instance 1 clicks this — all its events flood instance 2's relay — instance 2 ingests them — names resolve, tree builds.
+
+**Fix — `dismissedMatches` persistence via Electron IPC:**
+`PossibleMatchesPanel` was using `localStorage` for dismissed pairs. In Electron, localStorage is unreliable (may clear on restart). Switched to `storageGet`/`storageSet` (Electron IPC-backed, writes to userData JSON files). Dismissed pairs now survive app restarts. `loadDismissed` is now async; `useState` initialises to empty set with a `useEffect` that loads from storage.
+
+**Fix — repeated duplicate suggestion:**
+Same-person links confirmed in the UI were being added to the in-memory graph but not persisted across restarts (graph is `MemoryGraphStore`). On next session, `getAllSamePersonLinks()` returns empty, so the pair re-appears. The dismissed-match persistence fix prevents re-suggestion for dismissed pairs. For confirmed links, the kind-30083 event is published to the relay — on next session it will be re-ingested and the link re-added to the graph automatically.
+
+**Files changed:**
+- `src/context/AppContext.tsx`: `repushAllEvents` implementation + interface + context value
+- `src/components/PossibleMatchesPanel.tsx`: `storageGet`/`storageSet` for dismissed pairs; async load in `useEffect`
+- `src/App.tsx`: "Re-sync all my data" button in Connect tab; `repushAllEvents` destructured
+
+**Tests: 655/655. TypeScript clean. Build clean.**
+
+**Instructions for testing:**
+1. Both instances running, connected.
+2. If instance 2 shows "Unknown" names — go to Connect tab in **instance 1**, click "↺ Re-sync all my data to connected instances".
+3. Instance 2 should update within a few seconds.
+4. If tree still empty in instance 2 — also click "↺ Repair missing tree connections" in instance 1.
+
+---
+
+## ⚠️ NEXT SESSION — STRUCTURAL REBUILD BRIEF
+
+**Read this entire section before writing any code.**
+
+---
+
+### Decision: Remove per-person npubs — use UUID string IDs for ancestors
+
+This decision was made at the end of the May 2026 session after approximately 12 versions of sync fixes that did not resolve the core problems. The root cause of all sync failures traced back to the per-person npub model for ancestors. This section documents exactly what to change, what to keep, and the known bugs that motivated the decision.
+
+---
+
+### Known bugs in v1.0.86 (motivating the rebuild)
+
+**Bug 1 — Person display name shows as "Unknown" in instance 2**
+- Root cause: `replayStoredFactClaims` (added in v1.0.84) overwrites `displayName` for all persons from stored name claims. But if the name claim raw event is not in the store (because the relay lost it on restart — Gotcha #44), the person stays as "Unknown".
+- Additionally, `replayStoredFactClaims` now incorrectly overwrites the logged-in user's own display name if their name claim event isn't in the raw event store.
+- This was not a problem before v1.0.84. The function should only update persons whose displayName is currently "Unknown" — not overwrite everyone unconditionally.
+
+**Bug 2 — Family tree does not build in instance 2**
+- Root cause: The embedded relay uses an in-memory event store (Gotcha #44). It loses all events on restart. Instance 1 pushes events to instance 2's relay only on first connect. If instance 2's relay restarts while connected, events are lost and never re-sent automatically.
+- The "Re-sync all my data" button (v1.0.86) is a manual workaround, not a fix.
+- The permanent fix is SQLite persistence in the relay (Option B from May 2026 session notes).
+
+**Bug 3 — Duplicate suggestions keep reappearing**
+- Confirmed same-person links are added to the in-memory graph but not persisted across restarts (MemoryGraphStore). On next session, `getAllSamePersonLinks()` returns empty, pair re-appears.
+- The kind-30083 event is published to the relay, so on reconnect it should be re-ingested. But if the relay has lost it (Bug 2), the link is gone.
+
+**Bug 4 — Dedup matching broken by npub format**
+- `computeCandidates` in `PossibleMatchesPanel` uses `store.getAllPersons()` which returns persons keyed by their pubkey. In the two-instance scenario, the same real person exists under two different pubkeys. `scoreMatch` compares claim arrays by pubkey — if the pubkeys differ (they always do for the same ancestor added independently), the name claims are under different keys and matching is unreliable.
+
+---
+
+### What the rebuild changes
+
+**Core principle: ancestors use UUID string IDs, not Nostr keypairs.**
+
+Your session key (BIP39 mnemonic → npub/nsec) is unchanged. You still log in with a real Nostr keypair. All events are still signed by your session key. The cryptographic integrity of the claim model is fully preserved.
+
+What changes is that ancestors are no longer assigned their own keypair. Instead each ancestor gets a `id: string` (UUID v4, e.g. `"550e8400-e29b-41d4-a716-446655440000"`). This ID is stable, portable, and collision-resistant without any cryptography.
+
+**Type changes (`src/types/chronicle.ts`):**
+
+```typescript
+// OLD
+interface Person {
+  pubkey: string      // npub bech32
+  displayName: string
+  isLiving: boolean
+  createdAt: number
+}
+
+// NEW
+interface Person {
+  id: string          // UUID v4 for ancestors; session npub for the logged-in user
+  displayName: string
+  isLiving: boolean
+  createdAt: number
+}
+```
+
+The logged-in user's own `Person` record uses their npub as the ID — this preserves Nostr identity for the living user. Only ancestor records change to UUID.
+
+**Event tag changes:**
+- `['subject', personId]` — was npub, now UUID for ancestors
+- `['related', personId]` — same
+- `event.pubkey` — still hex of the claimant's session key (unchanged)
+- `['claimed_by', sessionNpub]` — identity anchor still records who added the ancestor
+
+**Store changes (`src/lib/storage.ts`):**
+- `MemoryStore` keys persons by `id` instead of `pubkey`
+- `store.getPerson(id)` — same API, different key type
+- `store.upsertPerson(person)` — same
+- `store.searchPersons(query)` — same
+
+**Graph changes (`src/lib/graph.ts`):**
+- `RelationshipClaim.subjectPubkey` → `subjectId`
+- `RelationshipClaim.relatedPubkey` → `relatedId`
+- `traverseGraph(rootId, ...)` — same API
+- `resolveCanonicalId` replaces `resolveCanonicalPubkey` — but since IDs are now stable UUIDs, same-person merging becomes a direct re-ID operation rather than a link chain
+
+**eventBuilder changes (`src/lib/eventBuilder.ts`):**
+- `buildFactClaim({ subjectId, ... })` instead of `subjectNpub`
+- `buildRelationshipClaim({ subjectId, relatedId, ... })` instead of npub params
+- `buildIdentityAnchor(personId, claimantNpub, claimantNsec)` — personId is UUID for ancestors
+- No `npubToHex`/`hexToNpub` calls anywhere in the builder for ancestor IDs
+
+**relaySync ingesters:**
+- `ingestIdentityAnchor`: `event.pubkey` is still the claimant's hex key. The person ID is now in a `['person_id', uuid]` tag on the event. No more using `event.pubkey` as the person identifier.
+- `ingestFactClaim`: `getTag(event, 'subject')` returns a UUID now, not an npub. No format conversion needed.
+- `ingestRelationshipClaim`: same — `subject` and `related` tags are UUIDs.
+- `replayStoredFactClaims`: same logic, simpler — no pubkey format concerns.
+
+**AddPersonModal changes:**
+- When creating an ancestor: `const personId = crypto.randomUUID()` instead of `generateAncestorKeyPair()`
+- No `nsec` storage for ancestors — they have no private key
+- The `AncestorKeyPair` type and all related code is deleted
+
+**Deduplication changes:**
+- Two persons are candidates if `scoreMatch` returns confidence ≥ 0.35
+- Confirming a merge: the lower-created-at person's ID is re-mapped to the higher-created-at person's ID in the store. All claims referencing the old ID are updated. No kind-30083 event needed — the merge is a local store operation, and the canonical ID is shared as a fact claim tag so other instances learn it.
+- `PossibleMatchesPanel` simplifies significantly — no `resolveCanonicalPubkey` chain, no link events, just a direct store merge.
+
+**What is deleted entirely:**
+- `generateAncestorKeyPair()` in `keys.ts`
+- `AncestorKeyPair` type
+- `ancestorKeys` map in `MemoryStore`
+- `hexToNpub`/`npubToHex` calls in relaySync, graph, AddPersonModal (kept in `keys.ts` for the session key only)
+- `kind 30083` (same-person link events) — replaced by direct merge
+- `resolveCanonicalPubkey` in graph.ts — replaced by direct ID lookup
+- `buildSamePersonLink` in eventBuilder.ts
+- `addSamePersonLink`/`getAllSamePersonLinks` in graph.ts
+- The `autoDedup.test.ts` same-person-link tests (replaced by merge tests)
+
+**What is NOT deleted:**
+- Session keypair (BIP39 mnemonic, npub, nsec) — unchanged
+- All relay infrastructure
+- All event signing via session key
+- All UI components (minor prop name changes only)
+- The relay subscription (already kind-only, no authors filter)
+- The confidence scoring and conflict resolution model
+- i18n, Bootstrap, D3 tree layout
+
+---
+
+### Permanent relay fix (do this in the same session)
+
+Wire SQLite into the relay so events survive restarts. This is Option B from the May 2026 session notes:
+
+The relay (`relay/server.js`) already has SQLite support — it falls back to in-memory only when `better-sqlite3` isn't available. In the packaged Electron build, the relay runs outside the asar archive and can't access `node_modules`. 
+
+Fix: copy `better-sqlite3` native binary into `relay/node_modules/` as part of the electron-builder config, OR switch to the simpler approach: **remove the embedded relay's own SQLite and instead have it forward all events to the app's `SqliteStore` via Electron IPC**.
+
+Simplest working fix for the session: in `relay/server.js`, make the in-memory fallback persist to a JSON file in `userData` on every write. This is not as efficient as SQLite but is portable, requires no native compilation, and means events survive relay restarts. Use `fs.writeFileSync` after each `insertEvent`. Load on startup.
+
+```javascript
+// relay/server.js — file-backed in-memory store
+const EVENTS_FILE = path.join(process.env.DB_PATH || '.', 'relay-events.json')
+
+function loadEvents() {
+  try {
+    const raw = fs.readFileSync(EVENTS_FILE, 'utf8')
+    const arr = JSON.parse(raw)
+    for (const e of arr) inMemoryEvents.set(e.id, e)
+    console.log(`[relay] loaded ${arr.length} events from ${EVENTS_FILE}`)
+  } catch { /* first run */ }
+}
+
+function persistEvents() {
+  try {
+    fs.writeFileSync(EVENTS_FILE, JSON.stringify([...inMemoryEvents.values()]))
+  } catch (e) {
+    console.error('[relay] failed to persist events:', e.message)
+  }
+}
+```
+
+Call `loadEvents()` at startup. Call `persistEvents()` after every `insertEvent`. This makes the relay's event store durable with no native dependencies.
+
+---
+
+### Session start checklist for next Claude
+
+1. Extract tarball to `/tmp/chronicle-work/chronicle-export/`
+2. Read Design Plan and this Implementation Log fully
+3. Restore better-sqlite3 mock: `cp src/__mocks__/better-sqlite3.js node_modules/better-sqlite3/index.js`
+4. Run baseline: `npx vitest run` — expect 655/655
+5. Implement the rebuild in this order:
+   a. `src/types/chronicle.ts` — Person.id, remove AncestorKeyPair
+   b. `src/lib/storage.ts` — key by id not pubkey, remove ancestorKeys
+   c. `src/lib/graph.ts` — subjectId/relatedId, remove same-person link machinery
+   d. `src/lib/eventBuilder.ts` — UUID subject tags, remove buildSamePersonLink
+   e. `src/lib/relaySync.ts` — update ingesters, fix replayStoredFactClaims
+   f. `src/lib/keys.ts` — remove generateAncestorKeyPair
+   g. `src/components/AddPersonModal.tsx` — crypto.randomUUID() for ancestors
+   h. `relay/server.js` — file-backed event persistence
+   i. Update all tests
+   j. TypeScript check, build check, full test run
+6. Deliver tarball + updated log
+
+---
+
+### Current version at end of May 2026 session: v1.0.86
+### Tests at handoff: 655/655
+### TypeScript: clean
+### Build: clean
+
+
+---
+
+## v1.0.87 — UUID Person IDs + File-Backed Relay Persistence
+
+### Core rebuild: ancestors now use UUID v4 IDs instead of Nostr keypairs
+
+**Motivation:** The per-person npub model for ancestors caused all sync failures documented in v1.0.83–v1.0.86. Two instances independently creating the same ancestor each assigned different npubs; claims, relationships, and display names could never be reliably reconciled across instances.
+
+**What changed:**
+
+**`Person.pubkey` → `Person.id`**
+- `id: string` — UUID v4 for ancestors (e.g. `"550e8400-e29b-41d4-a716-446655440000"`); session npub for the logged-in user
+- Generated via `crypto.randomUUID()` in `AddPersonModal.tsx` and `gedcomImport.ts`
+- `generateAncestorKeyPair()` and `AncestorKeyPair` deleted from `keys.ts`
+- `StoredAncestorKey` deleted from `storage.ts`
+
+**`MemoryStore` changes:**
+- Persons keyed by `id` not `pubkey`
+- `ancestorKeys` map removed
+- New alias table: `Map<localId, PersonAlias[]>` — records remote IDs from other instances for the same person
+- `addPersonAlias(alias)` / `getAliasesFor(id)` / `resolvePersonId(anyId)` / `getAllAliases()`
+- `serialise()`/`deserialise()` updated to include aliases
+
+**`FactClaim` changes:**
+- `subjectPubkey` → `subjectId`
+
+**`RelationshipClaim` changes:**
+- `subjectPubkey` → `subjectId`, `relatedPubkey` → `relatedId`
+
+**`GraphEdge` changes:**
+- `fromPubkey` → `fromId`, `toPubkey` → `toId`
+
+**`SamePersonLink` changes:**
+- `pubkeyA` → `idA`, `pubkeyB` → `idB`
+- Added optional `remoteIdA`, `remoteIdB`, `creatorNpubA`, `creatorNpubB` fields
+- Now carries alias registration info so receiving instances can map remote IDs to local ones
+
+**`eventBuilder.ts` changes:**
+- `buildIdentityAnchor(personId, claimedByNpub, claimedByNsec)` — adds `['person_id', personId]` tag; signed by claimant, not ancestor
+- `buildFactClaim` param: `subjectNpub` → `subjectId`
+- `buildRelationshipClaim` params: `subjectNpub` → `subjectId`, `relatedNpub` → `relatedId`
+- `buildSamePersonLink` updated to use person IDs and optional remote ID fields
+
+**`relaySync.ts` changes:**
+- `ingestIdentityAnchor` reads `person_id` tag (skips legacy events without it)
+- `ingestFactClaim` resolves `subject` tag via `store.resolvePersonId()` before storing
+- `ingestRelationshipClaim` same resolution for `subject` and `related` tags
+- `ingestSamePersonLink` registers aliases in store via `store.addPersonAlias()`
+- `replayStoredFactClaims` reverted to only update persons with displayName `'Unknown'` (fixes the v1.0.85 regression that overwrote session user's own name)
+- `maybeDetectDuplicate` now uses `areAliases()` instead of `alreadyLinked()`
+
+**`graph.ts` changes:**
+- `resolveCanonicalPubkey` replaced by `resolveAliasIds(id): Set<string>` — returns all known IDs for the alias group, no winner
+- New `areAliases(idA, idB): boolean` — true if both IDs are in the same alias group
+- Traversal updated to use `subjectId`/`relatedId`
+
+**`treeLinking.ts` changes:**
+- `MatchCandidate`: `pubkeyA/B` → `idA/idB`
+- `scoreMatch`, `findMatchCandidates`, `alreadyLinked`, `linkConnectsTrees`, `bestClaimValue` all updated
+
+**`sqliteStore.ts` changes:**
+- `persons` table: `pubkey` column → `person_id`
+- `claims` table: `subject_pubkey` → `subject_id`
+- `relationships` table: `subject_pubkey`/`related_pubkey` → `subject_id`/`related_id`
+- `same_person_links` table: `pubkey_a`/`pubkey_b` → `id_a`/`id_b`
+- `setAncestorKey`/`getAncestorKey` now no-op stubs (deprecated)
+
+**`better-sqlite3` mock** updated to match new schema column names.
+
+**`FamilyTreeView.tsx`:**
+- `NodeData.pubkey` → `NodeData.id` (internal field rename)
+- D3 rendering updated to use `d.id`
+
+**`TreeView.tsx`:**
+- Dedup hiding uses `areAliases()` instead of `resolveCanonicalPubkey()`
+
+**`relay/server.js`:**
+- In-memory fallback now file-backed: writes all events to `relay-events.json` in `userData` on every insert; loads on startup
+- Events survive relay restarts even without native `better-sqlite3`
+
+### Alias model
+
+When two instances connect and confirm the same ancestor:
+- Instance 1 has ancestor "Ralph" as `uuid-A` (created by Alice's npub)
+- Instance 2 has ancestor "Ralph" as `uuid-B` (created by Bob's npub)
+- After confirming same-person link: both instances record the other's UUID as an alias
+- Claims tagged with `uuid-A` are resolved to the local record on instance 2 via `store.resolvePersonId()`
+- `areAliases(uuid-A, uuid-B)` returns true on both instances
+- No UUID is retired; both persist with their own IDs plus the alias table
+
+### When a new identity anchor arrives
+
+If instance 2 receives a `person_id: uuid-X` anchor from instance 1:
+- If `uuid-X` is already known locally → no-op
+- If `uuid-X` resolves via alias table to a local ID → register alias only
+- Otherwise → create a new person stub with `id: uuid-X`
+
+### Tests
+
+- 657/657 passing
+- 30/30 test files passing
+- TypeScript: clean
+- Build: clean
+
+### Gotcha #54 — Identity anchor events require `person_id` tag
+
+`ingestIdentityAnchor` skips any event without a `['person_id', uuid]` tag. Legacy events from pre-v1.0.87 builds cannot be ingested. Both instances must be on v1.0.87 or later for sync to work.
+
+### Gotcha #55 — `resolveAliasIds` returns a `Set<string>`, not a string
+
+Unlike the old `resolveCanonicalPubkey` which picked a winner, `resolveAliasIds` returns all known IDs in the alias group. Use `areAliases(idA, idB)` for boolean checks. Do NOT compare `resolveAliasIds(id) === someString` — it will always be false (Set vs string).
+
+### Gotcha #56 — File-backed relay persistence requires `DB_PATH` env var
+
+`relay/server.js` writes `relay-events.json` to `path.dirname(DB_PATH)`. In Electron, `DB_PATH` is set to `app.getPath('userData')/chronicle.db` by `electron/main.cjs`. In dev mode without Electron, it defaults to the relay directory. The file is read on startup and written after every insert.
+
+### Version: v1.0.87
+### Tests: 657/657
+### TypeScript: clean
+### Build: clean

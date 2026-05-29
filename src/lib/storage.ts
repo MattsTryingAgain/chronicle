@@ -33,11 +33,6 @@ export interface StoredIdentity {
   createdAt: number
 }
 
-export interface StoredAncestorKey {
-  npub: string
-  encryptedPrivkey: EncryptedPayload
-}
-
 export interface RecoveryContact {
   pubkey: string          // npub1...
   displayName: string
@@ -130,13 +125,18 @@ export async function decryptWithPassword(
  */
 export class MemoryStore {
   private identity: StoredIdentity | null = null
-  private ancestorKeys: Map<string, StoredAncestorKey> = new Map()
   private persons: Map<string, import('../types/chronicle').Person> = new Map()
   private claims: Map<string, import('../types/chronicle').FactClaim> = new Map()
   private endorsements: Map<string, import('../types/chronicle').Endorsement> = new Map()
   private recoveryContacts: Map<string, RecoveryContact> = new Map()
   /** Raw signed Nostr events — mirrors the SQLite events table */
   private rawEvents: Map<string, import('../types/chronicle').ChronicleEvent> = new Map()
+  /**
+   * Alias table: maps local person ID → set of PersonAlias records.
+   * Each alias records a remote person ID (from another instance) that refers
+   * to the same real individual, plus the npub of whoever created that record.
+   */
+  private aliases: Map<string, import('../types/chronicle').PersonAlias[]> = new Map()
 
   // ── Identity ──────────────────────────────────────────────────────────────
 
@@ -156,40 +156,25 @@ export class MemoryStore {
     this.identity = null
   }
 
-  // ── Ancestor Keys ─────────────────────────────────────────────────────────
-
-  setAncestorKey(npub: string, key: StoredAncestorKey): void {
-    this.ancestorKeys.set(npub, key)
-  }
-
-  getAncestorKey(npub: string): StoredAncestorKey | undefined {
-    return this.ancestorKeys.get(npub)
-  }
-
   // ── Persons ───────────────────────────────────────────────────────────────
 
   upsertPerson(person: import('../types/chronicle').Person): void {
-    this.persons.set(person.pubkey, person)
+    this.persons.set(person.id, person)
   }
 
-  deletePerson(pubkey: string): void {
-    this.persons.delete(pubkey)
+  deletePerson(personId: string): void {
+    this.persons.delete(personId)
+    this.aliases.delete(personId)
     // Remove all claims for this person
     for (const [id, claim] of this.claims) {
-      if (claim.subjectPubkey === pubkey || claim.claimantPubkey === pubkey) {
+      if (claim.subjectId === personId) {
         this.claims.delete(id)
       }
     }
-    // Remove all endorsements touching this person's claims
-    for (const [id, endorsement] of this.endorsements) {
-      if (endorsement.endorserPubkey === pubkey) {
-        this.endorsements.delete(id)
-      }
-    }
   }
 
-  getPerson(pubkey: string): import('../types/chronicle').Person | undefined {
-    return this.persons.get(pubkey)
+  getPerson(id: string): import('../types/chronicle').Person | undefined {
+    return this.persons.get(id)
   }
 
   getAllPersons(): import('../types/chronicle').Person[] {
@@ -215,10 +200,10 @@ export class MemoryStore {
   }
 
   getClaimsForPerson(
-    subjectPubkey: string,
+    subjectId: string,
   ): import('../types/chronicle').FactClaim[] {
     return Array.from(this.claims.values()).filter(
-      (c) => c.subjectPubkey === subjectPubkey,
+      (c) => c.subjectId === subjectId,
     )
   }
 
@@ -276,17 +261,59 @@ export class MemoryStore {
     return Array.from(this.rawEvents.values())
   }
 
+
+  // ── Person Aliases ────────────────────────────────────────────────────────
+
+  /**
+   * Record that a remote instance uses a different ID for the same person.
+   * localId is our ID for the person; remoteId is their ID; creatorNpub
+   * is the session key of the user who originally created that remote record.
+   */
+  addPersonAlias(alias: import('../types/chronicle').PersonAlias): void {
+    const existing = this.aliases.get(alias.localId) ?? []
+    // Avoid duplicate (same remoteId already recorded)
+    if (!existing.some(a => a.remoteId === alias.remoteId)) {
+      this.aliases.set(alias.localId, [...existing, alias])
+    }
+  }
+
+  getAliasesFor(localId: string): import('../types/chronicle').PersonAlias[] {
+    return this.aliases.get(localId) ?? []
+  }
+
+  /**
+   * Given any known ID (local or remote alias), return the local person ID.
+   * Returns null if not found.
+   */
+  resolvePersonId(anyId: string): string | null {
+    // Direct match
+    if (this.persons.has(anyId)) return anyId
+    // Scan alias table for a remote ID match
+    for (const [localId, aliases] of this.aliases) {
+      if (aliases.some(a => a.remoteId === anyId)) return localId
+    }
+    return null
+  }
+
+  getAllAliases(): import('../types/chronicle').PersonAlias[] {
+    const out: import('../types/chronicle').PersonAlias[] = []
+    for (const aliases of this.aliases.values()) out.push(...aliases)
+    return out
+  }
+
   // ── Serialise / Deserialise (for sessionStorage persistence) ─────────────
 
   serialise(): string {
     return JSON.stringify({
       identity: this.identity,
-      ancestorKeys: Object.fromEntries(this.ancestorKeys),
       persons: Object.fromEntries(this.persons),
       claims: Object.fromEntries(this.claims),
       endorsements: Object.fromEntries(this.endorsements),
       recoveryContacts: Object.fromEntries(this.recoveryContacts),
       rawEvents: Object.fromEntries(this.rawEvents),
+      aliases: Object.fromEntries(
+        Array.from(this.aliases.entries()).map(([k, v]) => [k, v])
+      ),
     })
   }
 
@@ -294,12 +321,16 @@ export class MemoryStore {
     const store = new MemoryStore()
     const data = JSON.parse(json)
     store.identity = data.identity ?? null
-    store.ancestorKeys = new Map(Object.entries(data.ancestorKeys ?? {}))
     store.persons = new Map(Object.entries(data.persons ?? {}))
     store.claims = new Map(Object.entries(data.claims ?? {}))
     store.endorsements = new Map(Object.entries(data.endorsements ?? {}))
     store.recoveryContacts = new Map(Object.entries(data.recoveryContacts ?? {}))
     store.rawEvents = new Map(Object.entries(data.rawEvents ?? {}))
+    // Restore alias table
+    const aliasData = data.aliases ?? {}
+    for (const [localId, aliases] of Object.entries(aliasData)) {
+      store.aliases.set(localId, aliases as import('../types/chronicle').PersonAlias[])
+    }
     return store
   }
 }

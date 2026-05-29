@@ -19,13 +19,13 @@ import {
   addRelationship,
   addAcknowledgement,
   addSamePersonLink,
-  getAllSamePersonLinks,
+  areAliases,
 } from './graph'
 import type { RelationshipClaim, Acknowledgement, SamePersonLink } from './graph'
 import { schemaVersionChecker } from './schemaVersion'
 import { parseJoinRequest, parseJoinAccept } from './joinRequest'
 import type { JoinRequest, JoinAccept } from './joinRequest'
-import { scoreMatch, alreadyLinked } from './treeLinking'
+import { scoreMatch } from './treeLinking'
 
 // ── Join request callbacks ────────────────────────────────────────────────────
 // AppContext registers these so the UI can react to incoming handshake events
@@ -221,13 +221,39 @@ export function ingestEvent(event: ChronicleEvent): boolean {
 // ── Event-kind ingesters ──────────────────────────────────────────────────────
 
 function ingestIdentityAnchor(event: ChronicleEvent): void {
-  // Kind 30078: identity anchor. The pubkey IS the person identifier.
-  // Only create the person stub if not already known.
-  const existing = store.getPerson(event.pubkey)
+  // Kind 30078: identity anchor.
+  // The person_id tag carries the stable UUID (or npub for living users).
+  // event.pubkey is the claimant's session key — NOT the person ID.
+  const personId = getTag(event, 'person_id')
+  if (!personId) {
+    // Legacy event (pre-v1.0.87): no person_id tag. Skip — these are
+    // from old builds and cannot be safely ingested under the new model.
+    console.warn('[ingestIdentityAnchor] no person_id tag, skipping legacy event', event.id?.slice(0,8))
+    return
+  }
+
+  const claimedByNpub = getTag(event, 'claimed_by') ?? event.pubkey
+
+  // Check if we already have this person locally
+  const existing = store.getPerson(personId)
   if (existing) return
 
+  // Check if a local alias resolves to this personId — i.e. we have a
+  // different local ID for the same remote person. If so, register the alias.
+  const resolvedId = store.resolvePersonId(personId)
+  if (resolvedId && resolvedId !== personId) {
+    // We have a local record; just register the alias so claims can cross-reference
+    store.addPersonAlias({
+      localId: resolvedId,
+      remoteId: personId,
+      creatorNpub: claimedByNpub,
+      createdAt: event.created_at,
+    })
+    return
+  }
+
   const person: Person = {
-    pubkey: event.pubkey,
+    id: personId,
     displayName: 'Unknown', // placeholder until name fact claim arrives
     isLiving: false,
     createdAt: event.created_at,
@@ -237,18 +263,23 @@ function ingestIdentityAnchor(event: ChronicleEvent): void {
 
 function ingestFactClaim(event: ChronicleEvent): void {
   // Kind 30081: fact claim about a subject.
-  const subject = getTag(event, 'subject')
+  // subject tag carries a person ID (UUID for ancestors, npub for living user).
+  const subjectId = getTag(event, 'subject')
   const field = getTag(event, 'field')
   const value = getTag(event, 'value')
 
-  if (!subject || !field || !value) return
+  if (!subjectId || !field || !value) return
 
   const KNOWN_FACT_FIELDS: FactField[] = ['name', 'born', 'died', 'birthplace', 'deathplace', 'occupation', 'bio']
   if (!KNOWN_FACT_FIELDS.includes(field as FactField)) return
 
+  // Resolve via alias table — the subjectId might be a remote ID we have
+  // mapped to a local ID
+  const localId = store.resolvePersonId(subjectId) ?? subjectId
+
   const claim: FactClaim = {
     eventId: event.id,
-    subjectPubkey: subject,
+    subjectId: localId,
     claimantPubkey: event.pubkey,
     field: field as FactField,
     value,
@@ -258,11 +289,10 @@ function ingestFactClaim(event: ChronicleEvent): void {
     confidenceScore: 0, // recomputed at read time
   }
 
-  // Ensure the person exists before storing the claim — they may not have an
-  // identity anchor event if they were added by a remote user who didn't publish one
-  if (!store.getPerson(subject)) {
+  // Ensure the person exists before storing the claim
+  if (!store.getPerson(localId)) {
     store.upsertPerson({
-      pubkey: subject,
+      id: localId,
       displayName: 'Unknown',
       isLiving: false,
       createdAt: event.created_at,
@@ -273,18 +303,15 @@ function ingestFactClaim(event: ChronicleEvent): void {
 
   // If this fact sets a name, update the person stub display name
   if (field === 'name') {
-    const person = store.getPerson(subject)
+    const person = store.getPerson(localId)
     if (person) {
       store.upsertPerson({ ...person, displayName: value })
     }
   }
 
   // After any name or birth fact, scan for possible duplicates in the store.
-  // This catches the common case where instance 1 has "Alice, b.1980" and
-  // instance 2 syncs in "Alice" with no DoB — the name hit alone is enough
-  // to surface a suggestion. Only fires when there's something to compare.
   if (field === 'name' || field === 'born') {
-    maybeDetectDuplicate(subject)
+    maybeDetectDuplicate(localId)
   }
 }
 
@@ -295,20 +322,17 @@ function ingestFactClaim(event: ChronicleEvent): void {
  *
  * Runs synchronously but is O(n) in number of persons — fine up to ~1,000.
  */
-function maybeDetectDuplicate(subjectPubkey: string): void {
+function maybeDetectDuplicate(subjectId: string): void {
   if (!onPendingMatchFound) return
   const allPersons = store.getAllPersons()
   if (allPersons.length < 2) return
   const allClaims = store.getAllClaims()
-  const existingLinks = getAllSamePersonLinks()
 
   for (const other of allPersons) {
-    if (other.pubkey === subjectPubkey) continue
-    if (alreadyLinked(subjectPubkey, other.pubkey, existingLinks)) continue
-    const candidate = scoreMatch(subjectPubkey, other.pubkey, allClaims)
+    if (other.id === subjectId) continue
+    if (areAliases(subjectId, other.id)) continue
+    const candidate = scoreMatch(subjectId, other.id, allClaims)
     if (candidate.confidence >= AUTO_DEDUP_THRESHOLD) {
-      // At least one unlinked pair qualifies — notify the UI and stop scanning.
-      // The UI will re-run the full scan itself.
       onPendingMatchFound()
       return
     }
@@ -368,22 +392,24 @@ function ingestRelationshipClaim(event: ChronicleEvent): void {
     return
   }
 
+  // Resolve via alias table in case these are remote IDs we've mapped locally
+  const localSubject = store.resolvePersonId(subject) ?? subject
+  const localRelated = store.resolvePersonId(related) ?? related
+
   // Ensure both persons exist as stubs before adding the relationship.
-  // Relationship events can arrive before identity anchors or fact claims —
-  // without stubs, traverseGraph finds the edge but can't render either node.
-  const ensurePersonStub = (pubkey: string) => {
-    if (!store.getPerson(pubkey)) {
+  const ensurePersonStub = (personId: string) => {
+    if (!store.getPerson(personId)) {
       store.upsertPerson({
-        pubkey,
+        id: personId,
         displayName: 'Unknown',
         isLiving: false,
         createdAt: event.created_at,
       })
-      console.log('[ingestRelationshipClaim] created stub for', pubkey.slice(0, 12))
+      console.log('[ingestRelationshipClaim] created stub for', personId.slice(0, 12))
     }
   }
-  ensurePersonStub(subject)
-  ensurePersonStub(related)
+  ensurePersonStub(localSubject)
+  ensurePersonStub(localRelated)
 
   const sensitive = getTag(event, 'sensitive') === 'true'
   const subtype = getTag(event, 'subtype')
@@ -392,8 +418,8 @@ function ingestRelationshipClaim(event: ChronicleEvent): void {
   const rel: RelationshipClaim = {
     eventId: event.id,
     claimantPubkey: event.pubkey,
-    subjectPubkey: subject,
-    relatedPubkey: related,
+    subjectId: localSubject,
+    relatedId: localRelated,
     relationship: relationship as RelationshipType,
     sensitive,
     subtype: KNOWN_SUBTYPES.includes(subtype as SensitiveRelationshipSubtype)
@@ -404,7 +430,7 @@ function ingestRelationshipClaim(event: ChronicleEvent): void {
     retracted: false,
   }
 
-  console.log('[ingestRelationshipClaim] adding', relationship, 'between', subject.slice(0,12), '→', related.slice(0,12))
+  console.log('[ingestRelationshipClaim] adding', relationship, 'between', localSubject.slice(0,12), '→', localRelated.slice(0,12))
   addRelationship(rel)
 }
 
@@ -427,22 +453,54 @@ function ingestAcknowledgement(event: ChronicleEvent): void {
 }
 
 function ingestSamePersonLink(event: ChronicleEvent): void {
-  // Kind 30083: links two person pubkeys as the same individual.
-  const pubkeyA = getTag(event, 'subject_a')
-  const pubkeyB = getTag(event, 'subject_b')
+  // Kind 30083: declares two person IDs as referring to the same individual.
+  // subject_a / subject_b carry local IDs from the publishing instance.
+  // remote_a / remote_b (optional) carry the corresponding IDs from the
+  // other instance — used to register aliases in the local store.
+  const idA = getTag(event, 'subject_a')
+  const idB = getTag(event, 'subject_b')
+  const remoteIdA = getTag(event, 'remote_a') ?? undefined
+  const remoteIdB = getTag(event, 'remote_b') ?? undefined
 
-  if (!pubkeyA || !pubkeyB) return
+  if (!idA || !idB) return
 
   const link: SamePersonLink = {
     eventId: event.id,
     claimantPubkey: event.pubkey,
-    pubkeyA,
-    pubkeyB,
+    idA,
+    idB,
+    remoteIdA,
+    remoteIdB,
+    creatorNpubA: getTag(event, 'creator_a') ?? undefined,
+    creatorNpubB: getTag(event, 'creator_b') ?? undefined,
     createdAt: event.created_at,
     retracted: false,
   }
 
   addSamePersonLink(link)
+
+  // Register aliases in the store so future claims for remote IDs are
+  // automatically attributed to the correct local person.
+  // idA and idB are local to the publisher; for the receiver, they become
+  // remote IDs to map to their own local records.
+  if (remoteIdA) {
+    const localForA = store.resolvePersonId(idA) ?? idA
+    store.addPersonAlias({
+      localId: localForA,
+      remoteId: remoteIdA,
+      creatorNpub: getTag(event, 'creator_a') ?? event.pubkey,
+      createdAt: event.created_at,
+    })
+  }
+  if (remoteIdB) {
+    const localForB = store.resolvePersonId(idB) ?? idB
+    store.addPersonAlias({
+      localId: localForB,
+      remoteId: remoteIdB,
+      creatorNpub: getTag(event, 'creator_b') ?? event.pubkey,
+      createdAt: event.created_at,
+    })
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -490,16 +548,18 @@ export function replayStoredFactClaims(): void {
     }
   }
 
-  // Apply best name to every person — not just stubs.
-  // This covers: stubs that never had a name, AND persons whose name claim
-  // arrived before the stub and was deduplicated on subsequent syncs.
+  // Update persons whose displayName is still 'Unknown' (stub placeholder).
+  // Do NOT overwrite display names that have already been set — this prevents
+  // a remote name claim from clobbering the logged-in user's own display name.
   let updated = 0
   for (const [subject, { value }] of bestNameBySubject) {
-    const person = store.getPerson(subject)
+    // Resolve via alias table in case subject is a remote ID
+    const localId = store.resolvePersonId(subject) ?? subject
+    const person = store.getPerson(localId)
     if (!person) {
-      store.upsertPerson({ pubkey: subject, displayName: value, isLiving: false, createdAt: 0 })
+      store.upsertPerson({ id: localId, displayName: value, isLiving: false, createdAt: 0 })
       updated++
-    } else if (person.displayName !== value) {
+    } else if (person.displayName === 'Unknown') {
       store.upsertPerson({ ...person, displayName: value })
       updated++
     }

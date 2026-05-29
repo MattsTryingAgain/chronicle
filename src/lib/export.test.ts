@@ -9,14 +9,14 @@ import type { Person, FactClaim } from '../types/chronicle'
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 const thomas: Person = {
-  pubkey: 'npub1thomas',
+  id: 'npub1thomas',
   displayName: 'Thomas O\'Brien',
   isLiving: false,
   createdAt: 1_000,
 }
 
 const alice: Person = {
-  pubkey: 'npub1alice',
+  id: 'npub1alice',
   displayName: 'Alice O\'Brien',
   isLiving: true,
   createdAt: 2_000,
@@ -26,7 +26,7 @@ function makeClaim(overrides: Partial<FactClaim>): FactClaim {
   return {
     eventId: 'evt001',
     claimantPubkey: 'npub1claimant',
-    subjectPubkey: 'npub1thomas',
+    subjectId: 'npub1thomas',
     field: 'born',
     value: '1930',
     createdAt: 1_000,

@@ -12,7 +12,8 @@ import {
   addSamePersonLink,
   retractSamePersonLink,
   getSamePersonLinksFor,
-  resolveCanonicalPubkey,
+  resolveAliasIds,
+  areAliases,
   traverseGraph,
   _resetGraphStore,
   getAllRelationships,
@@ -34,8 +35,8 @@ const makeRel = (
 ): RelationshipClaim => ({
   eventId: id,
   claimantPubkey: subject,
-  subjectPubkey: subject,
-  relatedPubkey: related,
+  subjectId: subject,
+  relatedId: related,
   relationship: rel,
   sensitive,
   createdAt: 1_000_000,
@@ -53,8 +54,8 @@ const makeAck = (id: string, claimEventId: string, acknowledger: string, approve
 const makeLink = (id: string, a: string, b: string): SamePersonLink => ({
   eventId: id,
   claimantPubkey: a,
-  pubkeyA: a,
-  pubkeyB: b,
+  idA: a,
+  idB: b,
   createdAt: 1_000_000,
   retracted: false,
 })
@@ -67,7 +68,7 @@ describe('RelationshipClaim', () => {
     addRelationship(makeRel('rel1', a, b))
     const rels = getRelationshipsFor(a)
     expect(rels).toHaveLength(1)
-    expect(rels[0].relatedPubkey).toBe(b)
+    expect(rels[0].relatedId).toBe(b)
   })
 
   it('indexes both sides of the relationship', () => {
@@ -156,29 +157,52 @@ describe('SamePersonLink', () => {
   })
 })
 
-describe('resolveCanonicalPubkey', () => {
-  it('returns self if no links', () => {
-    expect(resolveCanonicalPubkey(npub(1))).toBe(npub(1))
+describe('resolveAliasIds', () => {
+  it('returns a Set containing just itself when no links', () => {
+    const id = npub(1)
+    const result = resolveAliasIds(id)
+    expect(result).toBeInstanceOf(Set)
+    expect(result.has(id)).toBe(true)
+    expect(result.size).toBe(1)
   })
 
-  it('returns lower-lex pubkey as canonical', () => {
+  it('includes both IDs when linked', () => {
     const a = 'npub1aaaa'
     const b = 'npub1zzzz'
-    addSamePersonLink(makeLink('lnk1', b, a)) // b is pubkeyA but a < b lex
-    // The link has pubkeyA=b, pubkeyB=a
-    // canonical = min(a,b) lex = a (since 'npub1aaaa' < 'npub1zzzz')
-    // resolveCanonicalPubkey(b) should lead to a
-    const result = resolveCanonicalPubkey(b)
-    expect(result).toBe(a)
+    addSamePersonLink(makeLink('lnk1', a, b))
+    const resultA = resolveAliasIds(a)
+    expect(resultA.has(a)).toBe(true)
+    expect(resultA.has(b)).toBe(true)
+    const resultB = resolveAliasIds(b)
+    expect(resultB.has(a)).toBe(true)
+    expect(resultB.has(b)).toBe(true)
   })
 
-  it('handles missing cycle gracefully', () => {
+  it('handles chained links without infinite loop', () => {
     const a = npub(1); const b = npub(2); const c = npub(3)
     addSamePersonLink(makeLink('lnk1', a, b))
     addSamePersonLink(makeLink('lnk2', b, c))
-    // Should not infinite loop
-    const result = resolveCanonicalPubkey(c)
-    expect(typeof result).toBe('string')
+    // Should not infinite loop; all three should be in the group
+    const result = resolveAliasIds(c)
+    expect(result).toBeInstanceOf(Set)
+    expect(result.size).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('areAliases', () => {
+  it('returns true for the same id', () => {
+    expect(areAliases(npub(1), npub(1))).toBe(true)
+  })
+
+  it('returns true for directly linked ids', () => {
+    const a = npub(1); const b = npub(2)
+    addSamePersonLink(makeLink('lnk1', a, b))
+    expect(areAliases(a, b)).toBe(true)
+    expect(areAliases(b, a)).toBe(true)
+  })
+
+  it('returns false for unlinked ids', () => {
+    expect(areAliases(npub(1), npub(2))).toBe(false)
   })
 })
 

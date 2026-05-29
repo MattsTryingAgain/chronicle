@@ -8,7 +8,7 @@ import {
   deduplicateDiscoveryResults,
   type DiscoveryEvent,
 } from './discovery.js'
-import { generateAncestorKeyPair, npubToHex } from './keys.js'
+import { npubToHex } from './keys.js'
 
 function makeEvent(overrides: Partial<DiscoveryEvent> = {}): DiscoveryEvent {
   return {
@@ -68,10 +68,11 @@ describe('buildDiscoveryTags', () => {
 })
 
 describe('parseDiscoveryEvent', () => {
+  const kp = { npub: 'npub1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygse4sl3h', nsec: 'nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw' }
+  const HEX = npubToHex(kp.npub)
+
   it('parses a valid event', () => {
-    const kp = generateAncestorKeyPair()
-    const hex = npubToHex(kp.npub)
-    const raw = makeRaw(hex, 'smith', 'wss://relay.example.com')
+    const raw = makeRaw(HEX, 'smith', 'wss://relay.example.com')
     const ev = parseDiscoveryEvent(raw)
     expect(ev).not.toBeNull()
     expect(ev!.nameFragment).toBe('smith')
@@ -80,22 +81,19 @@ describe('parseDiscoveryEvent', () => {
   })
 
   it('returns null for wrong kind', () => {
-    const kp = generateAncestorKeyPair()
-    const raw = { ...makeRaw(npubToHex(kp.npub), 'smith', 'wss://relay.example.com'), kind: 30078 }
+    const raw = { ...makeRaw(HEX, 'smith', 'wss://relay.example.com'), kind: 30078 }
     expect(parseDiscoveryEvent(raw)).toBeNull()
   })
 
   it('returns null for missing name_fragment tag', () => {
-    const kp = generateAncestorKeyPair()
     expect(parseDiscoveryEvent({
-      kind: 30085, pubkey: npubToHex(kp.npub),
+      kind: 30085, pubkey: HEX,
       tags: [['relay', 'wss://relay.example.com'], ['v', '1']], created_at: 0,
     })).toBeNull()
   })
 
   it('returns null for non-ws relay URL', () => {
-    const kp = generateAncestorKeyPair()
-    expect(parseDiscoveryEvent(makeRaw(npubToHex(kp.npub), 'smith', 'http://bad.com'))).toBeNull()
+    expect(parseDiscoveryEvent(makeRaw(HEX, 'smith', 'http://bad.com'))).toBeNull()
   })
 })
 

@@ -4,9 +4,10 @@ import {
   parseInviteCode,
   isValidInviteCode,
 } from './invite.js'
-import { generateAncestorKeyPair, hexToNpub, npubToHex } from './keys.js'
+import { hexToNpub, npubToHex } from './keys.js'
 
 const RELAY = 'wss://relay.example.com'
+const kp = { npub: 'npub1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygse4sl3h', nsec: 'nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw' }
 
 function kpHex(kp: { npub: string }) {
   return npubToHex(kp.npub)
@@ -14,14 +15,12 @@ function kpHex(kp: { npub: string }) {
 
 describe('invite codes', () => {
   it('generates a string starting with chronicle:', () => {
-    const kp = generateAncestorKeyPair()
     const code = generateInviteCode(kpHex(kp), RELAY)
     expect(code.startsWith('chronicle:')).toBe(true)
   })
 
   it('round-trips npub and relay', () => {
-    const kp = generateAncestorKeyPair()
-    const code = generateInviteCode(kpHex(kp), RELAY)
+      const code = generateInviteCode(kpHex(kp), RELAY)
     const parsed = parseInviteCode(code)
     expect(parsed).not.toBeNull()
     expect(parsed!.relay).toBe(RELAY)
@@ -29,8 +28,7 @@ describe('invite codes', () => {
   })
 
   it('parsed npub matches original pubkey', () => {
-    const kp = generateAncestorKeyPair()
-    const hex = kpHex(kp)
+      const hex = kpHex(kp)
     const code = generateInviteCode(hex, RELAY)
     const parsed = parseInviteCode(code)!
     expect(parsed.npub).toBe(hexToNpub(hex))
@@ -55,8 +53,7 @@ describe('invite codes', () => {
   })
 
   it('isValidInviteCode returns true for valid code', () => {
-    const kp = generateAncestorKeyPair()
-    const code = generateInviteCode(kpHex(kp), RELAY)
+      const code = generateInviteCode(kpHex(kp), RELAY)
     expect(isValidInviteCode(code)).toBe(true)
   })
 
@@ -65,16 +62,14 @@ describe('invite codes', () => {
   })
 
   it('handles ws relay URLs', () => {
-    const kp = generateAncestorKeyPair()
-    const code = generateInviteCode(kpHex(kp), 'ws://localhost:4869')
+      const code = generateInviteCode(kpHex(kp), 'ws://localhost:4869')
     const parsed = parseInviteCode(code)
     expect(parsed).not.toBeNull()
     expect(parsed!.relay).toBe('ws://localhost:4869')
   })
 
   it('trims whitespace around code', () => {
-    const kp = generateAncestorKeyPair()
-    const code = generateInviteCode(kpHex(kp), RELAY)
+      const code = generateInviteCode(kpHex(kp), RELAY)
     expect(parseInviteCode('  ' + code + '  ')).not.toBeNull()
   })
 })

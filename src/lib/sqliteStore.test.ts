@@ -29,7 +29,7 @@ const IDENTITY: StoredIdentity = {
 }
 
 const PERSON: Person = {
-  pubkey: 'npub1person1',
+  id: 'npub1person1',
   displayName: 'Bob Smith',
   isLiving: false,
   createdAt: NOW,
@@ -38,7 +38,7 @@ const PERSON: Person = {
 const CLAIM: FactClaim = {
   eventId: 'evt_claim_1',
   claimantPubkey: 'npub1user',
-  subjectPubkey: 'npub1person1',
+  subjectId: 'npub1person1',
   field: 'born',
   value: '1930',
   evidence: 'family bible',
@@ -102,28 +102,18 @@ describe('SqliteStore — identity', () => {
 
 // ─── Ancestor Keys ────────────────────────────────────────────────────────────
 
-describe('SqliteStore — ancestor keys', () => {
+describe('SqliteStore — ancestor keys (deprecated)', () => {
+  // Ancestor keys are deprecated in v1.0.87 — ancestors now use UUID IDs, not Nostr keypairs.
+  // These methods are retained as no-op stubs for API compatibility.
   let store: SqliteStore
   beforeEach(() => { store = new SqliteStore(':memory:') })
 
-  it('stores and retrieves an ancestor key', () => {
-    store.setAncestorKey('npub1anc', {
-      npub: 'npub1anc',
-      encryptedPrivkey: { ciphertext: 'c', nonce: 'n', salt: 's' },
-    })
-    const key = store.getAncestorKey('npub1anc')
-    expect(key).toBeDefined()
-    expect(key!.encryptedPrivkey.ciphertext).toBe('c')
+  it('getAncestorKey always returns undefined (deprecated)', () => {
+    expect(store.getAncestorKey('npub1anc')).toBeUndefined()
   })
 
-  it('returns undefined for unknown key', () => {
-    expect(store.getAncestorKey('npub1unknown')).toBeUndefined()
-  })
-
-  it('updates an existing ancestor key', () => {
-    store.setAncestorKey('npub1anc', { npub: 'npub1anc', encryptedPrivkey: { ciphertext: 'old', nonce: 'n', salt: 's' } })
-    store.setAncestorKey('npub1anc', { npub: 'npub1anc', encryptedPrivkey: { ciphertext: 'new', nonce: 'n', salt: 's' } })
-    expect(store.getAncestorKey('npub1anc')!.encryptedPrivkey.ciphertext).toBe('new')
+  it('setAncestorKey is a no-op (deprecated)', () => {
+    expect(() => store.setAncestorKey('npub1anc', {})).not.toThrow()
   })
 })
 
@@ -142,20 +132,20 @@ describe('SqliteStore — persons', () => {
 
   it('getAllPersons returns all', () => {
     store.upsertPerson(PERSON)
-    store.upsertPerson({ ...PERSON, pubkey: 'npub1person2', displayName: 'Carol' })
+    store.upsertPerson({ ...PERSON, id: 'npub1person2', displayName: 'Carol' })
     expect(store.getAllPersons()).toHaveLength(2)
   })
 
   it('searchPersons returns matching persons', () => {
     store.upsertPerson(PERSON)
-    store.upsertPerson({ ...PERSON, pubkey: 'npub1person2', displayName: 'Carol Jones' })
+    store.upsertPerson({ ...PERSON, id: 'npub1person2', displayName: 'Carol Jones' })
     expect(store.searchPersons('Bob')).toHaveLength(1)
     expect(store.searchPersons('Jones')).toHaveLength(1)
   })
 
   it('searchPersons returns all on empty query', () => {
     store.upsertPerson(PERSON)
-    store.upsertPerson({ ...PERSON, pubkey: 'npub1person2', displayName: 'Carol' })
+    store.upsertPerson({ ...PERSON, id: 'npub1person2', displayName: 'Carol' })
     expect(store.searchPersons('')).toHaveLength(2)
   })
 

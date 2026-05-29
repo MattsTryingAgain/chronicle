@@ -13,8 +13,8 @@ import type { SamePersonLink } from './graph'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface MatchCandidate {
-  pubkeyA: string         // person from tree A
-  pubkeyB: string         // person from tree B (or same tree, different node)
+  idA: string             // person ID from tree A (UUID for ancestors, npub for living user)
+  idB: string             // person ID from tree B (or same tree, different node)
   confidence: number      // 0–1
   reasons: MatchReason[]
 }
@@ -85,11 +85,11 @@ export function yearsMatch(a: string, b: string, tolerance = 1): boolean {
  */
 export function bestClaimValue(
   claims: FactClaim[],
-  subjectPubkey: string,
+  subjectId: string,
   field: FactField
 ): string | null {
   const relevant = claims
-    .filter(c => c.subjectPubkey === subjectPubkey && c.field === field && !c.retracted)
+    .filter(c => c.subjectId === subjectId && c.field === field && !c.retracted)
     .sort((a, b) => b.confidenceScore - a.confidenceScore)
   return relevant[0]?.value ?? null
 }
@@ -110,23 +110,23 @@ export function bestClaimValue(
  * Result is capped at 1.0.
  */
 export function scoreMatch(
-  pubkeyA: string,
-  pubkeyB: string,
+  idA: string,
+  idB: string,
   allClaims: FactClaim[],
-  /** Shared known relative pubkeys between the two persons (graph-derived) */
-  sharedRelativePubkeys: string[] = []
+  /** Shared known relative IDs between the two persons (graph-derived) */
+  sharedRelativeIds: string[] = []
 ): MatchCandidate {
   const reasons: MatchReason[] = []
   let score = 0
 
-  const nameA = bestClaimValue(allClaims, pubkeyA, 'name')
-  const nameB = bestClaimValue(allClaims, pubkeyB, 'name')
-  const bornA = bestClaimValue(allClaims, pubkeyA, 'born')
-  const bornB = bestClaimValue(allClaims, pubkeyB, 'born')
-  const birthplaceA = bestClaimValue(allClaims, pubkeyA, 'birthplace')
-  const birthplaceB = bestClaimValue(allClaims, pubkeyB, 'birthplace')
-  const diedA = bestClaimValue(allClaims, pubkeyA, 'died')
-  const diedB = bestClaimValue(allClaims, pubkeyB, 'died')
+  const nameA = bestClaimValue(allClaims, idA, 'name')
+  const nameB = bestClaimValue(allClaims, idB, 'name')
+  const bornA = bestClaimValue(allClaims, idA, 'born')
+  const bornB = bestClaimValue(allClaims, idB, 'born')
+  const birthplaceA = bestClaimValue(allClaims, idA, 'birthplace')
+  const birthplaceB = bestClaimValue(allClaims, idB, 'birthplace')
+  const diedA = bestClaimValue(allClaims, idA, 'died')
+  const diedB = bestClaimValue(allClaims, idB, 'died')
 
   // Name
   if (nameA && nameB) {
@@ -160,14 +160,14 @@ export function scoreMatch(
   }
 
   // Shared relative bonus
-  if (sharedRelativePubkeys.length > 0) {
+  if (sharedRelativeIds.length > 0) {
     reasons.push('shared-relative')
     score += 0.25
   }
 
   return {
-    pubkeyA,
-    pubkeyB,
+    idA,
+    idB,
     confidence: Math.min(1, score),
     reasons,
   }
@@ -182,8 +182,8 @@ export function scoreMatch(
  * This is O(|A| × |B|) — both sets should be bounded (max a few hundred).
  */
 export function findMatchCandidates(
-  pubkeysA: string[],
-  pubkeysB: string[],
+  idsA: string[],
+  idsB: string[],
   allClaims: FactClaim[],
   options: {
     minConfidence?: number
@@ -195,8 +195,8 @@ export function findMatchCandidates(
 
   const candidates: MatchCandidate[] = []
 
-  for (const a of pubkeysA) {
-    for (const b of pubkeysB) {
+  for (const a of idsA) {
+    for (const b of idsB) {
       if (a === b) continue
       const shared = sharedRelativesFn(a, b)
       const candidate = scoreMatch(a, b, allClaims, shared)
@@ -221,10 +221,10 @@ export function linkConnectsTrees(
   pubkeysA: Set<string>,
   pubkeysB: Set<string>
 ): boolean {
-  const aInA = pubkeysA.has(link.pubkeyA)
-  const aInB = pubkeysB.has(link.pubkeyA)
-  const bInA = pubkeysA.has(link.pubkeyB)
-  const bInB = pubkeysB.has(link.pubkeyB)
+  const aInA = pubkeysA.has(link.idA)
+  const aInB = pubkeysB.has(link.idA)
+  const bInA = pubkeysA.has(link.idB)
+  const bInB = pubkeysB.has(link.idB)
   return (aInA && bInB) || (aInB && bInA)
 }
 
@@ -233,14 +233,14 @@ export function linkConnectsTrees(
  * same-person link.
  */
 export function alreadyLinked(
-  pubkeyA: string,
-  pubkeyB: string,
+  idA: string,
+  idB: string,
   links: SamePersonLink[]
 ): boolean {
   return links.some(
     l =>
       !l.retracted &&
-      ((l.pubkeyA === pubkeyA && l.pubkeyB === pubkeyB) ||
-        (l.pubkeyA === pubkeyB && l.pubkeyB === pubkeyA))
+      ((l.idA === idA && l.idB === idB) ||
+        (l.idA === idB && l.idB === idA))
   )
 }

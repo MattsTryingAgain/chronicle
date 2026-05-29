@@ -26,7 +26,7 @@ function makeClaim(
   return {
     eventId: `claim-${Math.random().toString(36).slice(2)}`,
     claimantPubkey: 'npub1alice',
-    subjectPubkey: 'npub1ancestor',
+    subjectId: 'npub1ancestor',
     field: 'born',
     value: '1930',
     createdAt: 1000,

@@ -139,13 +139,37 @@ function initDb() {
   }
 
   if (!db) {
-    // Minimal in-memory shim with the same API surface used below
+    // File-backed in-memory store — events survive relay restarts even without
+    // better-sqlite3. Writes to a JSON file in DB_PATH directory on every insert.
+    const EVENTS_FILE = path.join(path.dirname(DB_PATH), 'relay-events.json')
     const memEvents = new Map()
+
+    // Load persisted events on startup
+    try {
+      const raw = fs.readFileSync(EVENTS_FILE, 'utf8')
+      const arr = JSON.parse(raw)
+      for (const e of arr) memEvents.set(e.id, e)
+      console.log(`[relay] Loaded ${arr.length} persisted events from ${EVENTS_FILE}`)
+    } catch {
+      // First run or file missing — start empty
+    }
+
+    const persistEvents = () => {
+      try {
+        fs.writeFileSync(EVENTS_FILE, JSON.stringify(Array.from(memEvents.values())))
+      } catch (e) {
+        console.error('[relay] Failed to persist events:', e.message)
+      }
+    }
+
     db = {
       prepare: (sql) => ({
         run: (params) => {
           if (sql.includes('INSERT OR IGNORE')) {
-            if (!memEvents.has(params.id)) memEvents.set(params.id, params)
+            if (!memEvents.has(params.id)) {
+              memEvents.set(params.id, params)
+              persistEvents()
+            }
           }
           return { changes: 1 }
         },
@@ -161,7 +185,7 @@ function initDb() {
       _memEvents: memEvents,
       _isInMemory: true,
     }
-    console.log('[relay] In-memory event store active')
+    console.log(`[relay] File-backed event store active — persisting to ${EVENTS_FILE}`)
     return
   }
 
