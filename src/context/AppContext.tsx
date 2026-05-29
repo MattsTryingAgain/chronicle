@@ -146,6 +146,7 @@ interface AppContextValue {
   /** Re-publishes all relationship events from the local graph with correct tags.
    *  Fixes relationships stored before v1.0.79 that lacked the 'related' tag. */
   repairRelationships: () => void
+  repushAllEvents: () => void
   /** Immediately triggers a duplicate scan regardless of incoming events. */
   triggerDupesScan: () => void
 }
@@ -714,6 +715,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setKnownRelays([LOCAL_RELAY_URL])
   }, [stopRelay])
 
+  // ── repushAllEvents ────────────────────────────────────────────────────────
+  // Forces a re-push of every raw event in the local store to all currently
+  // connected relays. Use this when a contact's relay has restarted and lost
+  // events — the relay's in-memory store is cleared on restart, so any events
+  // published before the restart are gone.
+
+  const repushAllEvents = useCallback(() => {
+    const pool = poolRef.current
+    if (!pool) return
+    const all = store.getAllRawEvents()
+    let count = 0
+    for (const event of all) {
+      pool.publish(event)
+      count++
+    }
+    console.log(`[repushAllEvents] pushed ${count} events to all connected relays`)
+  }, [])
+
   // ── repairRelationships ────────────────────────────────────────────────────
   // Re-publishes all locally-known relationship claims with the correct 'related'
   // tag. Needed for events stored before v1.0.79 when that tag was missing,
@@ -848,6 +867,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         mediaCacheEntries,
         registerMedia,
         repairRelationships,
+        repushAllEvents,
         triggerDupesScan,
       }}
     >

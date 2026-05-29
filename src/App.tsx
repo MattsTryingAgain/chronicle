@@ -50,7 +50,7 @@ function ConnectTab({ pendingMatchVersion }: { pendingMatchVersion: number }) {
   const {
     session, localRelayUrl, contacts, removeContact,
     joinRequests, acceptJoinRequest, rejectJoinRequest, reportBadActor,
-    sendJoinRequest, syncVersion, repairRelationships,
+    sendJoinRequest, syncVersion, repairRelationships, repushAllEvents,
   } = useApp()
 
   const [showInvite, setShowInvite] = useState(false)
@@ -79,12 +79,20 @@ function ConnectTab({ pendingMatchVersion }: { pendingMatchVersion: number }) {
       <PossibleMatchesPanel syncVersion={syncVersion} pendingMatchVersion={pendingMatchVersion} />
 
       {contacts.length > 0 && (
-        <div style={{ marginTop: 8 }}>
+        <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 4 }}>
           <button
             className="btn btn-ghost btn-sm"
-            style={{ color: 'var(--ink-muted)', fontSize: 12 }}
+            style={{ color: 'var(--ink-muted)', fontSize: 12, textAlign: 'left' }}
+            onClick={repushAllEvents}
+            title="Re-sends all your events to connected relays. Use this if the other instance is missing people or data — their relay may have restarted and lost events."
+          >
+            ↺ Re-sync all my data to connected instances
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ color: 'var(--ink-muted)', fontSize: 12, textAlign: 'left' }}
             onClick={repairRelationships}
-            title="Re-publishes all relationship events so the other instance can see them. Use this if the family tree is not showing connections after syncing."
+            title="Re-publishes relationship events with corrected tags."
           >
             ↺ Repair missing tree connections
           </button>

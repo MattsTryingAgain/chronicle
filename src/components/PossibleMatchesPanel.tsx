@@ -20,23 +20,24 @@ import { getAllSamePersonLinks, addSamePersonLink } from '../lib/graph'
 import { findMatchCandidates, alreadyLinked } from '../lib/treeLinking'
 import { buildSamePersonLink } from '../lib/eventBuilder'
 import { useApp } from '../context/AppContext'
+import { storageGet, storageSet } from '../lib/appStorage'
 import type { MatchCandidate } from '../lib/treeLinking'
 import type { SamePersonLink } from '../lib/graph'
 
-// ─── Dismissed pairs (persisted so they survive refreshes) ────────────────────
+// ─── Dismissed pairs (persisted via Electron IPC storage) ─────────────────────
 
 const DISMISSED_KEY = 'chronicle:dismissed-matches'
 
-function loadDismissed(): Set<string> {
+async function loadDismissed(): Promise<Set<string>> {
   try {
-    const raw = localStorage.getItem(DISMISSED_KEY)
+    const raw = await storageGet(DISMISSED_KEY)
     if (raw) return new Set(JSON.parse(raw))
   } catch {}
   return new Set()
 }
 
-function saveDismissed(set: Set<string>) {
-  try { localStorage.setItem(DISMISSED_KEY, JSON.stringify([...set])) } catch {}
+async function saveDismissed(set: Set<string>): Promise<void> {
+  try { await storageSet(DISMISSED_KEY, JSON.stringify([...set])) } catch {}
 }
 
 function pairKey(a: string, b: string): string {
@@ -89,7 +90,11 @@ interface PossibleMatchesPanelProps {
 export function PossibleMatchesPanel({ syncVersion, pendingMatchVersion }: PossibleMatchesPanelProps) {
   const { session, publishEvent } = useApp()
   const [candidates, setCandidates] = useState<MatchCandidate[]>([])
-  const [dismissed, setDismissed] = useState<Set<string>>(loadDismissed)
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    loadDismissed().then(setDismissed)
+  }, [])
   const [confirming, setConfirming] = useState<string | null>(null)
 
   // Re-run whenever sync or ingest detects new data, or dismissed set changes
@@ -131,7 +136,7 @@ export function PossibleMatchesPanel({ syncVersion, pendingMatchVersion }: Possi
     const next = new Set(dismissed)
     next.add(key)
     setDismissed(next)
-    saveDismissed(next)
+    void saveDismissed(next)
   }, [dismissed])
 
   if (candidates.length === 0) return (

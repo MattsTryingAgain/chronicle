@@ -1242,3 +1242,23 @@ Called from `AppContext` at four points:
 ### Gotcha #52 — Raw event deduplication prevents re-ingestion; use replay for backfill
 
 `ingestEvent` returns early if `store.getRawEvent(event.id)` already has the event. This means if a fact claim arrived and was stored before the person stub existed, re-sending the same event won't update the display name. Always use `replayStoredFactClaims()` after session restore and after sync completes to guarantee display names are correct from stored events.
+
+### Fix "Unknown" name + always-on dedup detection (v1.0.85)
+
+**Issue 1 — "Unknown" instead of real name**
+`replayStoredFactClaims` only updated persons whose `displayName === 'Unknown'` or ended with `'…'`. Persons who already had a real name set (e.g. created locally in instance 2) were skipped, so the incoming name claim from instance 1 never applied. Also, if someone's displayName was correctly set but then a stub was created by `ingestRelationshipClaim` with `'Unknown'`, the person might already have a real name from a different path.
+
+Fix: `replayStoredFactClaims` now always applies the best (most recent by `created_at`) name claim to every person, regardless of their current display name. Uses `bestNameBySubject` map to find the highest-createdAt name claim per pubkey, then upserts if `person.displayName !== value`.
+
+Also wired to run on every `scheduleSyncUpdate` batch (inside `setSyncUpdateHandler`), not just after `fetchOnConnect`. So every wave of incoming events triggers a name backfill.
+
+**Issue 2 — Dedup handler only registered when Connect tab is open**
+`setPendingMatchHandler` was registered inside `ConnectTab`'s `useEffect`. Since `ConnectTab` only mounts when the Connect tab is active, incoming duplicates arriving while on the People or Family Tree tab never triggered the handler — `onPendingMatchFound` was null and `maybeDetectDuplicate` silently returned.
+
+Fix: `pendingMatchVersion` state and the `setPendingMatchHandler` registration moved up to the main `AppShell` component, which is always mounted. `ConnectTab` receives `pendingMatchVersion` as a prop. The handler now fires regardless of which tab is open.
+
+**Tests: 655/655. TypeScript clean. Build clean.**
+
+### Gotcha #53 — setPendingMatchHandler must be registered at app shell level
+
+If `setPendingMatchHandler` is registered inside a tab component, it's only active when that tab is mounted. Dedup detection during sync on any other tab will silently drop. Register it in the always-mounted app shell and pass `pendingMatchVersion` down as a prop.
