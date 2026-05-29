@@ -1643,3 +1643,26 @@ Migration is idempotent — safe to run on already-migrated data (new field take
 
 ### Tests: 657/657 | TypeScript: clean | Build: clean
 ### Version: v1.0.88
+
+---
+
+## v1.0.89 — Fix synced names not persisting across restart
+
+### Root cause
+
+`setSyncUpdateHandler` in `AppContext.tsx` called `replayStoredFactClaims()` and bumped `syncVersion` — but never called `persistStore()`. So when instance 2 synced Alice's name from instance 1:
+
+1. Raw events arrived → stored in memory
+2. `replayStoredFactClaims` applied Alice's name → person updated in memory to `displayName: 'Alice'`
+3. App closed → `persistStore` was never called after sync → raw events and updated person records lost
+4. App restarted → persons loaded from last persisted state (Alice still `'Unknown'`) → raw events empty → `replayStoredFactClaims` has no name claims to apply → Alice stays `'Unknown'`
+
+### Fix
+
+`persistStore()` now called inside `setSyncUpdateHandler` after every sync batch. Raw events and updated display names are written to disk after every wave of incoming events.
+
+### Gotcha #57 — Sync data is lost on restart unless persisted after every batch
+
+`persistStore()` must be called after sync updates, not just at session start. If `setSyncUpdateHandler` only bumps `syncVersion` without persisting, any data received during a sync session (raw events, updated names, relationships) is discarded when the app closes.
+
+### Version: v1.0.89 | Tests: 657/657 | TypeScript: clean | Build: clean

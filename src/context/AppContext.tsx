@@ -527,6 +527,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSyncUpdateHandler(() => {
       replayStoredFactClaims()
       setSyncVersion(v => v + 1)
+      // Persist after every sync batch so raw events and updated display names
+      // survive app restarts. Without this, synced data (names, facts, relationships)
+      // is lost on close because persistStore was only called at session start.
+      persistStore()
     })
 
     // Register join request/accept handlers so incoming events update the UI
