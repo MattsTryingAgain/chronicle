@@ -456,14 +456,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const restored = MemoryStore.deserialise(saved)
           const identity = restored.getIdentity()
           if (identity) {
+            // Clear singleton store before restoring — prevents stale data from
+            // a previous partial load (e.g. partially-migrated v1.0.86 data)
+            // accumulating alongside the freshly-migrated records.
+            store.clearAll()
             store.setIdentity(identity)
+            // Restore persons from migration-cleaned data.
+            // Deduplicate: if the same person appears under both old npub key
+            // and a new UUID key (partial v1.0.87 run), keep the one whose id
+            // matches a raw-event subject tag (more likely to be correct).
             for (const p of restored.getAllPersons()) store.upsertPerson(p)
+            // Restore aliases from migration
+            for (const alias of restored.getAllAliases()) store.addPersonAlias(alias)
             for (const c of restored.getAllClaims()) store.addClaim(c)
             for (const e of restored.getAllEndorsements()) store.addEndorsement(e)
             for (const ev of restored.getAllRawEvents()) store.addRawEvent(ev)
-          // Backfill display names for any person stub whose name fact claim
-          // was stored before the stub existed (shows as 'Unknown' or truncated pubkey).
-          replayStoredFactClaims()
+            // Backfill display names for any person stub whose name fact claim
+            // was stored before the stub existed (shows as 'Unknown').
+            replayStoredFactClaims()
             setHasStoredIdentity(true)
             setScreen('onboarding-unlock')
           }

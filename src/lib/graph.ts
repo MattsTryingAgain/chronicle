@@ -333,10 +333,23 @@ export function serialiseGraph(): object {
 
 export function deserialiseGraph(data: Record<string, unknown>): void {
   _resetGraphStore()
-  const rels = (data.relationships ?? {}) as Record<string, RelationshipClaim>
+  const rawRels = (data.relationships ?? {}) as Record<string, Record<string, unknown>>
   const acks = (data.acknowledgements ?? {}) as Record<string, Acknowledgement>
-  const links = (data.samePersonLinks ?? {}) as Record<string, SamePersonLink>
-  for (const r of Object.values(rels)) addRelationship(r)
+  const rawLinks = (data.samePersonLinks ?? {}) as Record<string, Record<string, unknown>>
+
+  // ── Migration: pre-v1.0.87 RelationshipClaim used subjectPubkey/relatedPubkey
+  for (const r of Object.values(rawRels)) {
+    if (!r.subjectId && r.subjectPubkey) r.subjectId = r.subjectPubkey
+    if (!r.relatedId && r.relatedPubkey) r.relatedId = r.relatedPubkey
+    addRelationship(r as unknown as RelationshipClaim)
+  }
+
   for (const a of Object.values(acks)) addAcknowledgement(a)
-  for (const l of Object.values(links)) addSamePersonLink(l)
+
+  // ── Migration: pre-v1.0.87 SamePersonLink used pubkeyA/pubkeyB
+  for (const l of Object.values(rawLinks)) {
+    if (!l.idA && l.pubkeyA) l.idA = l.pubkeyA
+    if (!l.idB && l.pubkeyB) l.idB = l.pubkeyB
+    addSamePersonLink(l as unknown as SamePersonLink)
+  }
 }

@@ -1602,3 +1602,44 @@ Unlike the old `resolveCanonicalPubkey` which picked a winner, `resolveAliasIds`
 ### Tests: 657/657
 ### TypeScript: clean
 ### Build: clean
+
+---
+
+## v1.0.88 — Migration layer for v1.0.86 → v1.0.87 upgrade
+
+### Bug fixes (post-v1.0.87 deploy)
+
+**Bug 1 — Duplicate person in People list after upgrade**
+Root cause: `MemoryStore.deserialise()` loaded old persons without migrating `pubkey` → `id`. The singleton store already had some persons from `beginSession`, and after deserialise the same person could appear under two different keys (old npub key and newly created state).
+
+Fix: `store.clearAll()` is now called at the start of the restore block in `AppContext.tsx` before any data is loaded from the persisted store. This prevents stale data from accumulating alongside freshly-migrated records.
+
+**Bug 2 — Wrong death date appearing on a person**
+Root cause: Old persisted `FactClaim` objects had `subjectPubkey` field; `getClaimsForPerson` filters on `subjectId`. Without migration, claims were stored in the map but never returned for their subject — and `replayStoredFactClaims` was applying name claims correctly (reading raw event tags), but old deserialized claim objects with the wrong field name could confuse resolution logic.
+
+Fix: `MemoryStore.deserialise()` now migrates claim objects: if `subjectPubkey` exists and `subjectId` doesn't, copies the value across.
+
+**Bug 3 — Tree view shows one "Unknown" box**
+Root cause: Same migration gap — old `RelationshipClaim` objects had `subjectPubkey`/`relatedPubkey`; traversal uses `subjectId`/`relatedId`. Without migration, `traverseGraph` found zero edges, returning only the root node with no connections.
+
+Fix: `deserialiseGraph()` now migrates `RelationshipClaim` objects (`subjectPubkey` → `subjectId`, `relatedPubkey` → `relatedId`) and `SamePersonLink` objects (`pubkeyA` → `idA`, `pubkeyB` → `idB`) before adding them to the graph store.
+
+### New: `MemoryStore.clearAll()`
+
+Added `clearAll()` method that wipes persons, claims, endorsements, rawEvents, aliases, and identity from the singleton store. Called before restore to guarantee a clean slate.
+
+### Migration summary (applied on deserialise)
+
+| Old field | New field | Object type |
+|---|---|---|
+| `person.pubkey` | `person.id` | `Person` |
+| `claim.subjectPubkey` | `claim.subjectId` | `FactClaim` |
+| `rel.subjectPubkey` | `rel.subjectId` | `RelationshipClaim` |
+| `rel.relatedPubkey` | `rel.relatedId` | `RelationshipClaim` |
+| `link.pubkeyA` | `link.idA` | `SamePersonLink` |
+| `link.pubkeyB` | `link.idB` | `SamePersonLink` |
+
+Migration is idempotent — safe to run on already-migrated data (new field takes precedence, old field is only copied if new field is absent).
+
+### Tests: 657/657 | TypeScript: clean | Build: clean
+### Version: v1.0.88

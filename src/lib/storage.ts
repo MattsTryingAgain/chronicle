@@ -156,6 +156,20 @@ export class MemoryStore {
     this.identity = null
   }
 
+  /**
+   * Wipe all runtime state. Called before restoring a persisted store to ensure
+   * no stale data from a previous partial load remains.
+   */
+  clearAll(): void {
+    this.identity = null
+    this.persons.clear()
+    this.claims.clear()
+    this.endorsements.clear()
+    this.recoveryContacts.clear()
+    this.rawEvents.clear()
+    this.aliases.clear()
+  }
+
   // ── Persons ───────────────────────────────────────────────────────────────
 
   upsertPerson(person: import('../types/chronicle').Person): void {
@@ -321,11 +335,36 @@ export class MemoryStore {
     const store = new MemoryStore()
     const data = JSON.parse(json)
     store.identity = data.identity ?? null
-    store.persons = new Map(Object.entries(data.persons ?? {}))
-    store.claims = new Map(Object.entries(data.claims ?? {}))
+
+    // ── Migration: pre-v1.0.87 schema used `pubkey` on Person ────────────────
+    // Persons were keyed by pubkey; now keyed by id. Re-key any record that
+    // still has a `pubkey` field but no `id` field.
+    const rawPersons = data.persons ?? {}
+    for (const [key, p] of Object.entries(rawPersons)) {
+      const person = p as Record<string, unknown>
+      if (!person.id && person.pubkey) {
+        // Migrate: use pubkey value as the id
+        person.id = person.pubkey
+      }
+      // Re-key the map entry by id (in case the map key was the old pubkey)
+      const id = (person.id ?? key) as string
+      store.persons.set(id, person as unknown as import('../types/chronicle').Person)
+    }
+
+    // ── Migration: pre-v1.0.87 FactClaim used `subjectPubkey` ─────────────────
+    const rawClaims = data.claims ?? {}
+    for (const [evtId, c] of Object.entries(rawClaims)) {
+      const claim = c as Record<string, unknown>
+      if (!claim.subjectId && claim.subjectPubkey) {
+        claim.subjectId = claim.subjectPubkey
+      }
+      store.claims.set(evtId, claim as unknown as import('../types/chronicle').FactClaim)
+    }
+
     store.endorsements = new Map(Object.entries(data.endorsements ?? {}))
     store.recoveryContacts = new Map(Object.entries(data.recoveryContacts ?? {}))
     store.rawEvents = new Map(Object.entries(data.rawEvents ?? {}))
+
     // Restore alias table
     const aliasData = data.aliases ?? {}
     for (const [localId, aliases] of Object.entries(aliasData)) {
