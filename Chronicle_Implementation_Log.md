@@ -1666,3 +1666,27 @@ Migration is idempotent — safe to run on already-migrated data (new field take
 `persistStore()` must be called after sync updates, not just at session start. If `setSyncUpdateHandler` only bumps `syncVersion` without persisting, any data received during a sync session (raw events, updated names, relationships) is discarded when the app closes.
 
 ### Version: v1.0.89 | Tests: 657/657 | TypeScript: clean | Build: clean
+
+---
+
+## v1.0.90 — Publish session user's own name to relay; show contact npub in tree
+
+### Bug fix — session user shows as "Unknown" on connected instances
+
+**Root cause:** The session user's display name was stored only in the encrypted `StoredIdentity` object (the `chronicle` IPC file). It was never published as a Nostr fact claim event, so it was never in `store.getAllRawEvents()`. When instance 1 connected to instance 2's relay and pushed its events, Alice's name was not among them. Instance 2 created a stub `{ displayName: 'Unknown' }` and nothing ever updated it.
+
+**Fix — `publishSelfEvents()` in `AppContext.tsx`:**
+- New `useCallback` that checks whether the session user already has an identity anchor and name claim in the raw event store.
+- If either is missing, it builds and stores the signed event.
+- Calls `persistStore()` so the events survive restarts.
+- Called from two places:
+  1. `connectToRelay()` — runs before pushing own events to a newly connected relay, ensuring the name claim is always in the push set.
+  2. `beginSession()` — runs 500ms after session start, so the events exist from the first session onwards.
+
+**Effect:** When instance 1 connects to instance 2's relay, it now pushes a signed identity anchor and name claim for itself. Instance 2 ingests these, resolves the name from the raw event, and displays it correctly.
+
+### Feature — contact npub shown in tree action panel
+
+When clicking a connected family member node in the family tree, the action panel now displays their npub below the "Connected family member" badge. The npub is rendered in monospace, selectable on click, and truncation-free so it can be copied for verification.
+
+### Version: v1.0.90 | Tests: 657/657 | TypeScript: clean | Build: clean

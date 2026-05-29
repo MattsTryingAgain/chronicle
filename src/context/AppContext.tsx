@@ -27,7 +27,7 @@ import { encryptWithPassword, decryptWithPassword } from '../lib/storage'
 import { RelayPool, type RelayStatus } from '../lib/relay'
 import { broadcastQueue } from '../lib/queue'
 import { startSync, fetchOnConnect, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, replayStoredFactClaims, setContactPubkeysProvider, setSyncUpdateHandler } from '../lib/relaySync'
-import { buildJoinRequestEvent, buildJoinAcceptEvent, buildRelationshipClaim } from '../lib/eventBuilder'
+import { buildJoinRequestEvent, buildJoinAcceptEvent, buildRelationshipClaim, buildFactClaim, buildIdentityAnchor } from '../lib/eventBuilder'
 import { ContactListManager, type Contact } from '../lib/contactList'
 import { MergeQueue, type SyncSession } from '../lib/syncMerge'
 import { TrustRevocationStore, type TrustRevocation } from '../lib/trustRevocation'
@@ -242,6 +242,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       console.log(`[connectToRelay] ${url} status → ${status}`)
       setRelayStatuses({ ...pool.getStatuses() })
       if (status === 'connected') {
+        // Ensure self-describing events (identity anchor + name claim) exist in
+        // the raw event store before we push to the remote relay. Without this,
+        // connected instances never receive the session user's display name.
+        publishSelfEvents()
         const ownEvents = store.getAllRawEvents()
         console.log(`[connectToRelay] connected to ${url}, pushing ${ownEvents.length} own events, fetching remote`)
         // Pull events from this relay authored by known pubkeys (including contacts)
@@ -584,6 +588,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setSessionWithRef({ npub, nsec, displayName })
       setScreen('main')
       startRelay()
+      // Publish self-describing events (identity anchor + name claim) so they
+      // are in the raw event store and get pushed to any relay we connect to.
+      // We delay slightly to let the session ref settle.
+      setTimeout(() => publishSelfEvents(), 500)
       // Allowlist own pubkey immediately — this is the most critical call.
       // Without it the relay blocks ALL events including our own.
       void allowlistAdd(npub)
@@ -781,6 +789,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Signal via syncVersion bump — PossibleMatchesPanel watches this
     setSyncVersion(v => v + 1)
   }, [])
+
+  // ── publishSelfEvents ──────────────────────────────────────────────────────
+  // Publishes the session user's identity anchor and name claim if they are not
+  // already in the raw event store. Called on relay connect so connected instances
+  // always receive the current user's name.
+
+  const publishSelfEvents = useCallback(() => {
+    const sess = sessionRef.current
+    if (!sess?.nsec) return
+    // Only publish if we don't already have these events stored
+    const existing = store.getAllRawEvents()
+    const hasAnchor = existing.some(e =>
+      e.kind === 30078 &&
+      e.tags.some(t => t[0] === 'person_id' && t[1] === sess.npub)
+    )
+    const hasNameClaim = existing.some(e =>
+      e.kind === 30081 &&
+      e.tags.some(t => t[0] === 'subject' && t[1] === sess.npub) &&
+      e.tags.some(t => t[0] === 'field' && t[1] === 'name')
+    )
+
+    if (!hasAnchor) {
+      const anchor = buildIdentityAnchor(sess.npub, sess.npub, sess.nsec)
+      store.addRawEvent(anchor as unknown as ChronicleEvent)
+    }
+    if (!hasNameClaim && sess.displayName) {
+      const nameClaim = buildFactClaim({
+        claimantNpub: sess.npub,
+        claimantNsec: sess.nsec,
+        subjectId: sess.npub,
+        field: 'name',
+        value: sess.displayName,
+      })
+      store.addRawEvent(nameClaim as unknown as ChronicleEvent)
+    }
+    persistStore()
+  }, [persistStore])
 
   // ── publishEvent ───────────────────────────────────────────────────────────
 
