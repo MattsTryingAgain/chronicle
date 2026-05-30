@@ -1713,3 +1713,29 @@ Fix: `traverseGraph` now calls `resolveAliasIds(current)` for each visited node 
 Fix: `buildNodeData` now calls `store.resolvePersonId(personId)` first and uses the resolved local ID for both person lookup and claim lookup.
 
 ### Version: v1.0.91 | Tests: 657/657 | TypeScript: clean | Build: clean
+
+---
+
+## v1.0.92 — Fix session user name never transmitted to connected instances
+
+### Root cause (two bugs, same symptom)
+
+**Bug 1 — `publishSelfEvents` stored events locally but never broadcast them.**
+`store.addRawEvent(event)` stores an event in the raw event map but does NOT enqueue it to the broadcast queue or push it to any relay. `publishEvent(event)` does both. `publishSelfEvents` was using `store.addRawEvent` — so Matt's identity anchor and name claim were saved to disk but never transmitted to instance 2's relay.
+
+**Bug 2 — stale closure in `connectToRelay`.**
+`connectToRelay` is defined with `[]` deps (correct — it should never re-create). It called `publishSelfEvents()` directly, but `publishSelfEvents` was not yet defined when `connectToRelay` was created (React `useCallback` with `[]` captures the initial closure). The call was always to `undefined`.
+
+### Fixes
+
+1. `publishSelfEvents` now calls `publishEvent()` instead of `store.addRawEvent()`. This ensures the identity anchor and name claim are stored AND immediately broadcast to all connected relays.
+
+2. `publishSelfEvents` is now declared **after** `publishEvent` so the dependency is valid.
+
+3. A `publishSelfEventsRef` ref is kept in sync with the current `publishSelfEvents` callback. `connectToRelay` calls `publishSelfEventsRef.current?.()` instead of the function directly — this breaks the stale closure without adding `publishSelfEvents` to `connectToRelay`'s dep array (which would cause unnecessary reconnects).
+
+### Gotcha #58 — Store-only methods don't transmit events
+
+`store.addRawEvent(event)` persists an event locally. It does NOT broadcast. Always use `publishEvent(event)` when an event should be visible to connected instances. The distinction matters in any code that builds events outside of the normal `AddPersonModal` → `publishEvent` flow.
+
+### Version: v1.0.92 | Tests: 657/657 | TypeScript: clean | Build: clean

@@ -170,6 +170,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [generatedMnemonic, setGeneratedMnemonic] = useState<string | null>(null)
   const [relayStatuses, setRelayStatuses] = useState<Record<string, RelayStatus>>({})
   const poolRef = useRef<RelayPool | null>(null)
+  const publishSelfEventsRef = useRef<(() => void) | null>(null)
   const syncUnsubRef = useRef<(() => void) | null>(null)
 
   const [broadcastSettings, setBroadcastSettings] = useState<BroadcastSettings>({
@@ -245,7 +246,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // Ensure self-describing events (identity anchor + name claim) exist in
         // the raw event store before we push to the remote relay. Without this,
         // connected instances never receive the session user's display name.
-        publishSelfEvents()
+        publishSelfEventsRef.current?.()
         const ownEvents = store.getAllRawEvents()
         console.log(`[connectToRelay] connected to ${url}, pushing ${ownEvents.length} own events, fetching remote`)
         // Pull events from this relay authored by known pubkeys (including contacts)
@@ -790,15 +791,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSyncVersion(v => v + 1)
   }, [])
 
-  // ── publishSelfEvents ──────────────────────────────────────────────────────
-  // Publishes the session user's identity anchor and name claim if they are not
-  // already in the raw event store. Called on relay connect so connected instances
-  // always receive the current user's name.
+  // ── publishEvent ───────────────────────────────────────────────────────────
 
+  const publishEvent = useCallback((event: ChronicleEvent) => {
+    store.addRawEvent(event)
+    broadcastQueue.enqueue(event)
+    if (poolRef.current) broadcastQueue.drain(poolRef.current)
+    persistStore()
+  }, [persistStore])
+
+  // ── publishSelfEvents ──────────────────────────────────────────────────────
+  // Publishes the session user's identity anchor and name claim if not already
+  // in the raw event store. Called on relay connect so remote instances always
+  // receive the current user's display name.
   const publishSelfEvents = useCallback(() => {
     const sess = sessionRef.current
     if (!sess?.nsec) return
-    // Only publish if we don't already have these events stored
     const existing = store.getAllRawEvents()
     const hasAnchor = existing.some(e =>
       e.kind === 30078 &&
@@ -809,10 +817,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       e.tags.some(t => t[0] === 'subject' && t[1] === sess.npub) &&
       e.tags.some(t => t[0] === 'field' && t[1] === 'name')
     )
-
     if (!hasAnchor) {
       const anchor = buildIdentityAnchor(sess.npub, sess.npub, sess.nsec)
-      store.addRawEvent(anchor as unknown as ChronicleEvent)
+      publishEvent(anchor as unknown as ChronicleEvent)
     }
     if (!hasNameClaim && sess.displayName) {
       const nameClaim = buildFactClaim({
@@ -822,19 +829,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         field: 'name',
         value: sess.displayName,
       })
-      store.addRawEvent(nameClaim as unknown as ChronicleEvent)
+      publishEvent(nameClaim as unknown as ChronicleEvent)
     }
-    persistStore()
-  }, [persistStore])
-
-  // ── publishEvent ───────────────────────────────────────────────────────────
-
-  const publishEvent = useCallback((event: ChronicleEvent) => {
-    store.addRawEvent(event)
-    broadcastQueue.enqueue(event)
-    if (poolRef.current) broadcastQueue.drain(poolRef.current)
-    persistStore()
-  }, [persistStore])
+  }, [publishEvent])
+  // Sync ref so connectToRelay ([] deps) always calls the current version
+  publishSelfEventsRef.current = publishSelfEvents
 
   // ── Start relay when reaching main ─────────────────────────────────────────
 
