@@ -72,8 +72,10 @@ function extractYear(val: string | null): string | null {
 }
 
 function buildNodeData(personId: string): NodeData {
-  const person: Person | undefined = store.getPerson(personId)
-  const claims = store.getClaimsForPerson(personId)
+  // Resolve alias: if personId is a remote UUID, map to local person record
+  const localId = store.resolvePersonId(personId) ?? personId
+  const person: Person | undefined = store.getPerson(localId)
+  const claims = store.getClaimsForPerson(localId)
   const endorsements = store.getAllEndorsements()
   const resolutions = resolveAllFields(claims, endorsements)
   const hasConflict = resolutions.some(r => r.conflictState === 'hard' || r.conflictState === 'soft')

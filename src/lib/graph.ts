@@ -255,24 +255,38 @@ export function traverseGraph(rootId: string, options: TraversalOptions = {}): T
     const [current, depth] = queue.shift()!
     if (depth >= maxDepth) continue
 
-    for (const rel of _backend.getRelationshipsFor(current)) {
-      const neighbour = rel.subjectId === current ? rel.relatedId : rel.subjectId
-      if (!edges.find(e => e.claimEventId === rel.eventId)) {
-        edges.push({
-          fromId: rel.subjectId,
-          toId: rel.relatedId,
-          relationship: rel.relationship,
-          sensitive: rel.sensitive,
-          subtype: rel.subtype,
-          acknowledged: _isAcknowledged(rel.eventId),
-          claimEventId: rel.eventId,
-          meta: rel.meta,
-        })
-      }
-      if (!visited.has(neighbour)) {
-        if (visited.size >= maxNodes) { truncated = true; continue }
-        visited.add(neighbour)
-        queue.push([neighbour, depth + 1])
+    // Also query relationships for all alias IDs of this node — handles the case
+    // where a relationship was stored against a different UUID for the same person
+    // (e.g. added before a same-person link was confirmed).
+    const aliasIds = resolveAliasIds(current)
+
+    for (const queryId of aliasIds) {
+      for (const rel of _backend.getRelationshipsFor(queryId)) {
+        const neighbour = rel.subjectId === queryId ? rel.relatedId : rel.subjectId
+        // Normalise edge to use the canonical (visited) ID for the current node
+        const normFromId = aliasIds.has(rel.subjectId) ? current : rel.subjectId
+        const normToId   = aliasIds.has(rel.relatedId) ? current : rel.relatedId
+        if (!edges.find(e => e.claimEventId === rel.eventId)) {
+          edges.push({
+            fromId: normFromId,
+            toId: normToId,
+            relationship: rel.relationship,
+            sensitive: rel.sensitive,
+            subtype: rel.subtype,
+            acknowledged: _isAcknowledged(rel.eventId),
+            claimEventId: rel.eventId,
+            meta: rel.meta,
+          })
+        }
+        // Resolve neighbour through alias — if the neighbour is an alias of a
+        // visited node, skip it; otherwise enqueue the canonical form.
+        const neighbourAliases = resolveAliasIds(neighbour)
+        const alreadyVisited = Array.from(neighbourAliases).some(a => visited.has(a))
+        if (!alreadyVisited) {
+          if (visited.size >= maxNodes) { truncated = true; continue }
+          visited.add(neighbour)
+          queue.push([neighbour, depth + 1])
+        }
       }
     }
   }

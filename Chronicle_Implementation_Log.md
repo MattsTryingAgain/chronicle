@@ -1690,3 +1690,26 @@ Migration is idempotent — safe to run on already-migrated data (new field take
 When clicking a connected family member node in the family tree, the action panel now displays their npub below the "Connected family member" badge. The npub is rendered in monospace, selectable on click, and truncation-free so it can be copied for verification.
 
 ### Version: v1.0.90 | Tests: 657/657 | TypeScript: clean | Build: clean
+
+---
+
+## v1.0.91 — Alias-aware traversal; deduplicated person picker; build node data via alias resolution
+
+### Problems fixed
+
+**1. Both Marias visible in relationship picker**
+When two instances independently create the same ancestor (each with a different UUID), both records appear in AddPersonModal's person picker. The user can't tell which to pick, and picking the wrong one means the relationship gets stored against the UUID that has no connections in the other instance's graph.
+
+Fix: `AddPersonModal` now deduplicates the person list using `areAliases()`. When two persons are confirmed aliases of each other (same-person link exists), only the one with more claims is shown in the picker. The underlying UUID used for storing the relationship is the best-data record.
+
+**2. Laura didn't appear in tree after being added to the wrong Maria**
+`traverseGraph` only queried `getRelationshipsFor(current)` — it didn't know that `uuid-A-Maria` and `uuid-B-Maria` are the same person. So Laura (linked to `uuid-B-Maria`) was never reached when traversing from Matt (whose parent is `uuid-A-Maria`).
+
+Fix: `traverseGraph` now calls `resolveAliasIds(current)` for each visited node and queries relationships for ALL alias IDs of that node. Laura is found regardless of which Maria UUID her relationship was stored against. Edges are normalised to use the representative (first-visited) UUID so the tree renders correctly.
+
+**3. Tree nodes showing wrong name for alias IDs**
+`buildNodeData` called `store.getPerson(personId)` directly. If the visiting ID was a remote UUID (alias), `getPerson` returned undefined and the node showed "Unknown".
+
+Fix: `buildNodeData` now calls `store.resolvePersonId(personId)` first and uses the resolved local ID for both person lookup and claim lookup.
+
+### Version: v1.0.91 | Tests: 657/657 | TypeScript: clean | Build: clean

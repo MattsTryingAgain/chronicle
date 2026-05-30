@@ -36,7 +36,7 @@
 import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { store } from '../lib/storage'
-import { serialiseGraph, getRelationshipsFor, retractRelationship } from '../lib/graph'
+import { serialiseGraph, getRelationshipsFor, retractRelationship , areAliases} from '../lib/graph'
 import { storageSet } from '../lib/appStorage'
 import { useApp } from '../context/AppContext'
 import { buildFactClaim, buildRelationshipClaim, buildIdentityAnchor } from '../lib/eventBuilder'
@@ -200,7 +200,34 @@ export function AddPersonModal({ mode, selfPubkey, editPerson, onSave, onDelete,
   const [relRows, setRelRows] = useState<RelRow[]>([])
 
   const subjectId2 = editPerson?.id ?? null
-  const allPersons = store.getAllPersons().filter(p => p.id !== subjectId2)
+  // Build deduplicated person list for the relationship picker.
+  // When two persons are known aliases of each other (same-person link confirmed),
+  // show only the one with more claims — the user shouldn't see both in a dropdown.
+  const allPersons = (() => {
+    const all = store.getAllPersons().filter(p => p.id !== subjectId2)
+    const allClaims = store.getAllClaims()
+    const shown = new Set<string>()
+    const result: typeof all = []
+    for (const p of all) {
+      if (shown.has(p.id)) continue
+      // Find any alias in the list — prefer the one with more claims
+      const aliases = all.filter(q => q.id !== p.id && areAliases(p.id, q.id))
+      if (aliases.length > 0) {
+        // Pick the candidate with the most claims as the representative
+        const candidates = [p, ...aliases]
+        const best = candidates.reduce((a, b) =>
+          allClaims.filter(c => c.subjectId === a.id).length >=
+          allClaims.filter(c => c.subjectId === b.id).length ? a : b
+        )
+        for (const c of candidates) shown.add(c.id)
+        result.push(best)
+      } else {
+        shown.add(p.id)
+        result.push(p)
+      }
+    }
+    return result
+  })()
 
   const persistNow = useCallback(() => {
     void storageSet('chronicle:store', store.serialise())
