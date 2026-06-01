@@ -26,7 +26,7 @@ import { generateUserKeyMaterial, importKeyMaterial, nsecToHex, npubToHex } from
 import { encryptWithPassword, decryptWithPassword } from '../lib/storage'
 import { RelayPool, type RelayStatus } from '../lib/relay'
 import { broadcastQueue } from '../lib/queue'
-import { startSync, fetchOnConnect, ingestEvent, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, replayStoredFactClaims, setContactPubkeysProvider, setSyncUpdateHandler, getAvatar as rsGetAvatar, getStoriesForPerson as rsGetStoriesForPerson, replayStoredMediaEvents } from '../lib/relaySync'
+import { startSync, fetchOnConnect, ingestAvatarEvent, ingestStoryEvent, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, replayStoredFactClaims, setContactPubkeysProvider, setSyncUpdateHandler, getAvatar as rsGetAvatar, getStoriesForPerson as rsGetStoriesForPerson, replayStoredMediaEvents } from '../lib/relaySync'
 import { buildJoinRequestEvent, buildJoinAcceptEvent, buildRelationshipClaim, buildFactClaim, buildIdentityAnchor, buildAvatarEvent, buildStoryEvent } from '../lib/eventBuilder'
 import { processAvatarImage } from '../lib/media'
 import { ContactListManager, type Contact } from '../lib/contactList'
@@ -899,9 +899,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       processed.mimeType,
       processed.size,
     )
+    // Ingest into local media store BEFORE publishEvent adds it to the raw
+    // event store — publishEvent calls store.addRawEvent first, and ingestEvent
+    // deduplicates on raw event id, so calling ingestEvent after publishEvent
+    // would silently skip the avatar ingestion.
+    ingestAvatarEvent(event as unknown as ChronicleEvent)
     publishEvent(event as unknown as ChronicleEvent)
-    // Also ingest locally so UI updates immediately without waiting for relay round-trip
-    ingestEvent(event as unknown as ChronicleEvent)
     setSyncVersion(v => v + 1)
     await persistStore()
   }, [session, publishEvent])
@@ -915,8 +918,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       title,
       storyContent,
     )
+    // Same ordering constraint as setAvatar — ingest before publishEvent
+    ingestStoryEvent(event as unknown as ChronicleEvent)
     publishEvent(event as unknown as ChronicleEvent)
-    ingestEvent(event as unknown as ChronicleEvent)
     setSyncVersion(v => v + 1)
     await persistStore()
   }, [session, publishEvent])

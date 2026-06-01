@@ -565,17 +565,14 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
       .append('circle')
       .attr('cx', NODE_W - 10).attr('cy', 10).attr('r', 3.5).attr('fill', '#4caf78')
 
-    // Gold camera icon indicator for nodes that have a profile photo
+    // Gold dot indicator for nodes that have a profile photo
+    // Simple filled circle — emoji SVG text is unreliable across platforms
     nodeElems.filter(d => d.hasAvatar)
       .append('circle')
-      .attr('cx', 10).attr('cy', 10).attr('r', 5)
-      .attr('fill', 'var(--gold)').attr('opacity', 0.9)
-    nodeElems.filter(d => d.hasAvatar)
-      .append('text')
-      .attr('x', 10).attr('y', 14)
-      .attr('text-anchor', 'middle')
-      .attr('font-size', 7)
-      .text('📷')
+      .attr('cx', 9).attr('cy', 9).attr('r', 4.5)
+      .attr('fill', 'var(--gold)')
+      .attr('stroke', '#fff')
+      .attr('stroke-width', 1.5)
 
     nodeElems.append('text')
       .attr('x', NODE_W / 2).attr('y', 26)

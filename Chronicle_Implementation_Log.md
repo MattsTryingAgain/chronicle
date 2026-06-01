@@ -1915,3 +1915,55 @@ git push origin vX.X.X
 `ingestEvent` deduplicates all non-handshake events by `event.id` via `store.getRawEvent`. If the same avatar event is pushed twice (e.g. after "Re-sync all my data"), the second call returns false and `ingestAvatarEvent` is never called again for that event ID. This is correct. A new avatar is a new event with a new ID.
 
 ### Version: v1.0.93 | Tests: 678/678 | TypeScript: clean | Build: clean
+
+---
+
+## v1.0.94 — Media bug fixes: relay kinds, ingest ordering, reactivity, contact badge
+
+### Bugs fixed
+
+**Bug 1 — Tree node photo indicator showing camera emoji instead of dot**
+Root cause: SVG `<text>` elements render emoji unreliably across platforms (Electron WebView, macOS, Windows all differ).
+Fix: replaced the two SVG elements (gold circle + emoji text) with a single filled `<circle cx="9" cy="9" r="4.5" fill="var(--gold)" stroke="#fff" stroke-width="1.5">`. Clean dot in the top-left corner of any node that has a photo.
+
+**Bug 2 + 3 — Avatar and story not appearing locally after upload, and not syncing to connected instances**
+Root cause (primary): `relay/server.js` `CHRONICLE_KINDS` set only included kinds 30078–30090. Kinds 30091–30096 were missing. The relay was silently rejecting avatar (30095) and story (30096) events with "blocked: kind not accepted". Join requests (30091) had a special exemption but no other post-30090 kinds did.
+Fix: added 30091–30096 to `CHRONICLE_KINDS` in `relay/server.js`.
+
+Root cause (secondary): `setAvatar` and `addStory` called `publishEvent` first, then `ingestAvatarEvent`/`ingestStoryEvent`. `publishEvent` calls `store.addRawEvent(event)` which stores the event by ID. `ingestEvent` deduplicates on `store.getRawEvent(event.id)` — so calling `ingestEvent` after `publishEvent` would silently return false without populating `_avatarStore` or `_storyStore`. The avatar/story was stored in the raw event DB but never parsed into the media caches.
+Fix: `ingestAvatarEvent` and `ingestStoryEvent` are now exported from `relaySync.ts`. `setAvatar` and `addStory` in AppContext call them **before** `publishEvent`, bypassing the dedup guard for the local ingest path.
+
+**Bug 4 — ProfileCard not re-rendering when avatar is set while modal is open**
+Root cause: `ProfileCard` called `useApp().getAvatar` but didn't subscribe to `syncVersion`. If the profile modal was already open when an avatar was uploaded, the card didn't know to re-read from the media store.
+Fix: `ProfileCard` now also destructures `syncVersion` from `useApp()` (with `void syncVersion` to satisfy the linter). This subscribes the component to context updates so it re-renders whenever `setSyncVersion` fires.
+
+**Bug 5 — Connected contacts not marked `isLiving: true` in the local store**
+Root cause: `ingestIdentityAnchor` always set `isLiving: false` for all ingested persons. A living user's identity anchor has `person_id === claimed_by` (they claim themselves). Ancestors have `claimed_by = the person who added them`, which differs from the `person_id`.
+Fix: `ingestIdentityAnchor` now checks `claimedByNpub === personId`. If true, `isLiving: true` is set. Connected contacts (who always self-publish their anchor) now appear as living in the receiving instance.
+
+### Contact badge asymmetry — diagnosis and status
+
+The asymmetry (instance 2 sees instance 1's contact badge; instance 1 doesn't see instance 2's) occurs because:
+- Instance 2's person node in instance 1's tree only appears if instance 2 has synced relationship events that reach instance 1's tree traversal
+- When those relationships arrive, instance 2's person ID in the edges is their npub (their self-published `person_id`)
+- `isContact` check: `contacts.some(c => c.npub === personId)` — this works correctly if the node ID is the contact's npub
+- The badge should now appear correctly once sync is working (relay kind fix) and instance 2's relationship events have been received
+
+If the tree was built before sync fixed the missing kinds, a **"Re-sync all my data"** from instance 2's Connect tab will push their events fresh to instance 1's relay.
+
+### Files changed
+- `relay/server.js` — `CHRONICLE_KINDS` extended to include 30091–30096
+- `src/lib/relaySync.ts` — `ingestAvatarEvent` and `ingestStoryEvent` exported; `ingestIdentityAnchor` sets `isLiving: true` for self-claimed anchors
+- `src/context/AppContext.tsx` — `setAvatar`/`addStory` call direct ingest functions before `publishEvent`; removed redundant `ingestEvent` import
+- `src/components/FamilyTreeView.tsx` — SVG photo indicator replaced with clean circle
+- `src/components/ProfileCard.tsx` — subscribes to `syncVersion` for reactivity
+
+### Gotcha #61 — Relay CHRONICLE_KINDS must be updated when new event kinds are added
+
+`relay/server.js` has a static `CHRONICLE_KINDS` Set. Any new event kind added to `src/types/chronicle.ts` must also be added here or the relay will silently reject events of that kind with "blocked: kind X not accepted". Current range: 30078–30096.
+
+### Gotcha #62 — Always ingest media events before publishEvent
+
+`publishEvent` calls `store.addRawEvent` which marks the event as seen. Any subsequent call to `ingestEvent` will hit the dedup guard and return false. For media events (avatar, story) that need to land in the in-memory media caches, always call `ingestAvatarEvent` or `ingestStoryEvent` **before** calling `publishEvent`.
+
+### Version: v1.0.94 | Tests: 678/678 | TypeScript: clean | Build: clean

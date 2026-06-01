@@ -173,7 +173,8 @@ export function ProfileCard({
     [claims, endorsements],
   )
 
-  const { getAvatar } = useApp()
+  const { getAvatar, syncVersion } = useApp()
+  void syncVersion // subscribe to avatar/sync updates so card re-renders when media arrives
   const avatar = getAvatar(person.id)
 
   const expandedResolution = expandedField

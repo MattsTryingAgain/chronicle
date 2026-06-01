@@ -259,10 +259,13 @@ function ingestIdentityAnchor(event: ChronicleEvent): void {
     return
   }
 
+  // If claimed_by == person_id, the person is claiming themselves — a living user.
+  // This ensures connected contacts have isLiving: true in the local store.
+  const isLivingUser = claimedByNpub === personId
   const person: Person = {
     id: personId,
     displayName: 'Unknown', // placeholder until name fact claim arrives
-    isLiving: false,
+    isLiving: isLivingUser,
     createdAt: event.created_at,
   }
   store.upsertPerson(person)
@@ -604,7 +607,7 @@ export function getStoriesForPerson(personId: string): PersonStory[] {
   return result.sort((a, b) => b.createdAt - a.createdAt)
 }
 
-function ingestAvatarEvent(event: ChronicleEvent): void {
+export function ingestAvatarEvent(event: ChronicleEvent): void {
   const avatar = parseAvatarEvent(event)
   if (!avatar) return
   // Resolve alias so the avatar key is always the local canonical ID
@@ -616,7 +619,7 @@ function ingestAvatarEvent(event: ChronicleEvent): void {
   }
 }
 
-function ingestStoryEvent(event: ChronicleEvent): void {
+export function ingestStoryEvent(event: ChronicleEvent): void {
   const story = parseStoryEvent(event)
   if (!story) return
   // Resolve alias so stories are indexed under the local canonical ID

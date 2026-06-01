@@ -62,6 +62,12 @@ const ALLOWLIST_PATH = process.env.ALLOWLIST_PATH || path.join(__dirname, 'allow
 const CHRONICLE_KINDS = new Set([
   30078, 30079, 30080, 30081, 30082, 30083,
   30084, 30085, 30086, 30087, 30088, 30089, 30090,
+  // Stage 4+
+  30091, 30092, 30093,
+  // Stage 5
+  30094,
+  // Media Phase 1
+  30095, 30096,
 ])
 
 const MAX_FILTERS_PER_REQ = 10
