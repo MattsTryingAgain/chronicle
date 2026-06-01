@@ -12,7 +12,7 @@
  */
 
 import { EventKind } from '../types/chronicle'
-import type { ChronicleEvent, FactClaim, Endorsement, Person, FactField, RelationshipType, SensitiveRelationshipSubtype, PersonAvatar, PersonStory } from '../types/chronicle'
+import type { ChronicleEvent, FactClaim, Endorsement, FactField, RelationshipType, SensitiveRelationshipSubtype, PersonAvatar, PersonStory } from '../types/chronicle'
 import type { RelayClient } from './relay'
 import { store } from './storage'
 import {
@@ -230,33 +230,89 @@ export function ingestEvent(event: ChronicleEvent): boolean {
 
 // ── Event-kind ingesters ──────────────────────────────────────────────────────
 
+/**
+ * Attempt to auto-alias a contact's npub to an existing UUID-based person stub.
+ * Called when a self-published identity anchor arrives for a known contact npub,
+ * and also during replayStoredIdentityAnchors (which runs after contacts load).
+ *
+ * Strategy: find a name claim for the contact npub in the raw event store,
+ * then find an existing person with a matching name claim. If found, register
+ * the alias and mark the existing record as isLiving: true.
+ *
+ * Returns true if an alias was registered.
+ */
+function tryAutoAliasContact(personId: string, claimedByNpub: string, createdAt: number): boolean {
+  if (!_getContactNpubs) return false
+  const contactNpubs = _getContactNpubs()
+  if (!contactNpubs.includes(personId)) return false
+  // Already aliased?
+  if (store.resolvePersonId(personId) !== null && store.getPerson(personId) === undefined) {
+    // personId is a known remote ID already pointing to a local canonical
+    return false
+  }
+
+  const rawEvents = store.getAllRawEvents()
+  const nameForPersonId = rawEvents
+    .filter(e => e.kind === 30081 &&
+      e.tags.some((t: string[]) => t[0] === 'subject' && t[1] === personId) &&
+      e.tags.some((t: string[]) => t[0] === 'field' && t[1] === 'name'))
+    .sort((a, b) => b.created_at - a.created_at)[0]
+    ?.tags.find((t: string[]) => t[0] === 'value')?.[1]
+
+  if (!nameForPersonId) return false
+
+  for (const candidate of store.getAllPersons()) {
+    if (candidate.id === personId) continue  // skip the npub record itself
+    // Skip if this candidate is already aliased to personId
+    const existingAlias = store.resolvePersonId(personId)
+    if (existingAlias === candidate.id) return false  // already done
+    // Match by display name or name claim
+    const nameMatch = candidate.displayName === nameForPersonId ||
+      store.getClaimsForPerson(candidate.id)
+        .some(c => c.field === 'name' && c.value === nameForPersonId && !c.retracted)
+    if (nameMatch) {
+      store.addPersonAlias({
+        localId: candidate.id,
+        remoteId: personId,
+        creatorNpub: claimedByNpub,
+        createdAt,
+      })
+      store.upsertPerson({ ...candidate, isLiving: true })
+      console.log(`[auto-alias] contact ${personId.slice(0,12)} → ${candidate.id.slice(0,12)} via name "${nameForPersonId}"`)
+      return true
+    }
+  }
+  return false
+}
+
 function ingestIdentityAnchor(event: ChronicleEvent): void {
   // Kind 30078: identity anchor.
   // The person_id tag carries the stable UUID (or npub for living users).
   // event.pubkey is the claimant's session key — NOT the person ID.
   const personId = getTag(event, 'person_id')
   if (!personId) {
-    // Legacy event (pre-v1.0.87): no person_id tag. Skip — these are
-    // from old builds and cannot be safely ingested under the new model.
     console.warn('[ingestIdentityAnchor] no person_id tag, skipping legacy event', event.id?.slice(0,8))
     return
   }
 
   const claimedByNpub = getTag(event, 'claimed_by') ?? event.pubkey
+  const isLivingUser = claimedByNpub === personId
+
+  // Always attempt auto-alias for known contacts (idempotent — skips if already done)
+  if (isLivingUser) {
+    tryAutoAliasContact(personId, claimedByNpub, event.created_at)
+  }
 
   // Check if we already have this person locally (exact ID match)
   const existing = store.getPerson(personId)
   if (existing) {
-    // Already have them — but if this is a self-published anchor (living user)
-    // make sure their record is marked isLiving: true
-    if (claimedByNpub === personId && !existing.isLiving) {
+    if (isLivingUser && !existing.isLiving) {
       store.upsertPerson({ ...existing, isLiving: true })
     }
     return
   }
 
-  // Check if a local alias resolves to this personId — i.e. we have a
-  // different local ID for the same remote person. If so, register the alias.
+  // Check if a local alias resolves to this personId
   const resolvedId = store.resolvePersonId(personId)
   if (resolvedId && resolvedId !== personId) {
     store.addPersonAlias({
@@ -268,62 +324,13 @@ function ingestIdentityAnchor(event: ChronicleEvent): void {
     return
   }
 
-  // Auto-alias: if this is a self-published anchor (claimedBy === personId,
-  // i.e. a living user claiming themselves) AND this npub is in our contacts
-  // list, scan existing persons to find the UUID-based stub that was created
-  // for this contact before their anchor arrived, and register the alias.
-  const isLivingUser = claimedByNpub === personId
-  if (isLivingUser && _getContactNpubs) {
-    const contactNpubs = _getContactNpubs()
-    if (contactNpubs.includes(personId)) {
-      // Find an existing person whose display name matches the contact's name
-      // or who has no alias yet and was created around the right time.
-      // Strategy: look for any person whose facts include a name claim matching
-      // the name fact claim subject = this npub in the raw event store.
-      // Simpler: find persons whose claims have this npub as claimant, or
-      // whose name matches a name claim for personId.
-      // Most reliable: find the person with the highest-confidence name claim
-      // whose value matches the best name claim for personId in the raw events.
-      const rawEvents = store.getAllRawEvents()
-      const nameForPersonId = rawEvents
-        .filter(e => e.kind === 30081 &&
-          e.tags.some(t => t[0] === 'subject' && t[1] === personId) &&
-          e.tags.some(t => t[0] === 'field' && t[1] === 'name'))
-        .sort((a, b) => b.created_at - a.created_at)[0]
-        ?.tags.find(t => t[0] === 'value')?.[1]
-
-      if (nameForPersonId) {
-        // Find an existing person with this display name and no alias for personId yet
-        for (const candidate of store.getAllPersons()) {
-          if (candidate.id === personId) continue
-          if (store.resolvePersonId(personId) !== null) break // alias already registered
-          if (candidate.displayName === nameForPersonId ||
-              store.getClaimsForPerson(candidate.id)
-                .some(c => c.field === 'name' && c.value === nameForPersonId && !c.retracted)) {
-            store.addPersonAlias({
-              localId: candidate.id,
-              remoteId: personId,
-              creatorNpub: claimedByNpub,
-              createdAt: event.created_at,
-            })
-            // Update the local stub to mark them as living
-            store.upsertPerson({ ...candidate, isLiving: true })
-            console.log(`[ingestIdentityAnchor] auto-aliased contact ${personId.slice(0,12)} → ${candidate.id.slice(0,12)} via name "${nameForPersonId}"`)
-            return
-          }
-        }
-      }
-    }
-  }
-
-  // No existing record — create a new person stub
-  const person: Person = {
+  // No existing record — create a new stub
+  store.upsertPerson({
     id: personId,
     displayName: 'Unknown',
     isLiving: isLivingUser,
     createdAt: event.created_at,
-  }
-  store.upsertPerson(person)
+  })
 }
 
 function ingestFactClaim(event: ChronicleEvent): void {
@@ -724,4 +731,26 @@ export function replayStoredMediaEvents(): void {
 export function _resetMediaStore(): void {
   _avatarStore.clear()
   _storyStore.clear()
+}
+
+/**
+ * Re-run ingestIdentityAnchor for every stored IDENTITY_ANCHOR event,
+ * bypassing the raw-event dedup guard. Called after the contact list is
+ * loaded so the auto-alias logic has access to known contact npubs.
+ *
+ * This fixes the case where a contact's anchor was received before their
+ * npub was in the contacts list — the anchor was stored but the auto-alias
+ * never fired. Calling this after contacts load ensures the alias is
+ * registered on the next session start.
+ */
+export function replayStoredIdentityAnchors(): void {
+  const all = store.getAllRawEvents()
+  let aliased = 0
+  for (const event of all) {
+    if (event.kind === EventKind.IDENTITY_ANCHOR) {
+      ingestIdentityAnchor(event)
+      aliased++
+    }
+  }
+  if (aliased > 0) console.log(`[replayStoredIdentityAnchors] re-processed ${aliased} identity anchors`)
 }

@@ -26,7 +26,7 @@ import { generateUserKeyMaterial, importKeyMaterial, nsecToHex, npubToHex } from
 import { encryptWithPassword, decryptWithPassword } from '../lib/storage'
 import { RelayPool, type RelayStatus } from '../lib/relay'
 import { broadcastQueue } from '../lib/queue'
-import { startSync, fetchOnConnect, ingestAvatarEvent, ingestStoryEvent, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, replayStoredFactClaims, setContactPubkeysProvider, setSyncUpdateHandler, getAvatar as rsGetAvatar, getStoriesForPerson as rsGetStoriesForPerson, replayStoredMediaEvents } from '../lib/relaySync'
+import { startSync, fetchOnConnect, ingestAvatarEvent, ingestStoryEvent, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, replayStoredFactClaims, replayStoredIdentityAnchors, setContactPubkeysProvider, setSyncUpdateHandler, getAvatar as rsGetAvatar, getStoriesForPerson as rsGetStoriesForPerson, replayStoredMediaEvents } from '../lib/relaySync'
 import { buildJoinRequestEvent, buildJoinAcceptEvent, buildRelationshipClaim, buildFactClaim, buildIdentityAnchor, buildAvatarEvent, buildStoryEvent } from '../lib/eventBuilder'
 import { processAvatarImage } from '../lib/media'
 import { ContactListManager, type Contact } from '../lib/contactList'
@@ -621,6 +621,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
               for (const c of mgr.getAll()) {
                 void allowlistAdd(c.npub)
               }
+              // Re-run identity anchor ingestion now that contact npubs are known.
+              // This registers aliases for contacts whose anchors arrived before
+              // the contact list was loaded (e.g. on first sync).
+              replayStoredIdentityAnchors()
               // Connect to contact relays now that we have the list and
               // the session is confirmed active. Use a short delay to let
               // the local relay connection establish first.

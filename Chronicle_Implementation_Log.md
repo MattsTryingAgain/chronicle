@@ -2073,3 +2073,45 @@ The auto-alias logic in `ingestIdentityAnchor` only fires if `_getContactNpubs` 
 `byGen` node lists must be sorted by a stable key before `buildSlots`. Without this, any two instances with the same graph but different BFS traversal order will produce visually different layouts. The sort key is the person ID string — UUID and npub strings both sort stably.
 
 ### Version: v1.0.97 | Tests: 681/681 | TypeScript: clean | Build: clean
+
+---
+
+## v1.0.98 — Contact alias replay on session start; root-centred tree layout
+
+### Bugs fixed
+
+**Bug 1 — Contact badge still not appearing after v1.0.97**
+
+Root cause traced to the replay gap: the auto-alias in `ingestIdentityAnchor` fired correctly for *new* incoming anchors, but existing sessions already had Maria's anchor stored in the raw event store. `ingestEvent` deduplicates on event ID — once an anchor is stored it's never re-processed. The auto-alias code therefore never ran on session restore, leaving the UUID stub and npub record as two disconnected persons.
+
+Two-part fix:
+
+1. **`tryAutoAliasContact(personId, claimedByNpub, createdAt)`** — extracted as a standalone function, called unconditionally from `ingestIdentityAnchor` for self-published anchors (`claimedBy === personId`), regardless of whether the person already exists. Idempotent: checks `resolvePersonId` before registering to avoid double-registration.
+
+2. **`replayStoredIdentityAnchors()`** — new exported function. Iterates all stored IDENTITY_ANCHOR raw events and calls `ingestIdentityAnchor` on each, bypassing the event-level dedup guard. Called from `beginSession` immediately after the contact list is loaded from storage. This ensures that on every session start, after contacts are known, all stored anchors are re-evaluated for auto-aliasing.
+
+After this fix: on next launch of instance 1, contacts load → `replayStoredIdentityAnchors` runs → Maria's anchor is re-processed → `tryAutoAliasContact` finds Maria's UUID stub by name match → alias registered → `isContact` returns true → badge appears.
+
+**Bug 2 — Tree layout off-centre when returning to own tree**
+
+Root cause: auto-fit was centring on the bounding-box midpoint `(minX+maxX)/2, (minY+maxY)/2`. For asymmetric trees (more relatives on one side), the bounding box midpoint differs from the root node position, so the root appears off to one side.
+
+Fix: auto-fit now translates the D3 zoom to place the root node (always at layout coords 0, 0) at screen position `(width/2, height*0.6)`. The 60% vertical placement ensures ancestors (which sit above generation 0) have room to display. Layout geometry is identical; only the viewport transform changes.
+
+### Files changed
+- `src/lib/relaySync.ts` — `tryAutoAliasContact` extracted; `ingestIdentityAnchor` always calls it for living users; `replayStoredIdentityAnchors` exported; unused `Person` import removed
+- `src/context/AppContext.tsx` — `replayStoredIdentityAnchors` imported and called after contacts load; `replayStoredIdentityAnchors` added to relaySync import
+- `src/components/FamilyTreeView.tsx` — auto-fit centres on root node (0,0) at `(width/2, height*0.6)` instead of bounding-box centre
+- `src/components/FamilyTreeView.layout.ts` — `members.sort()` per generation (from v1.0.97, retained)
+
+### What to do after deploying
+
+On the existing two-instance setup, the alias won't register until `replayStoredIdentityAnchors` runs — which happens automatically on the next app launch. No manual action needed. The contact badge should appear after restarting both instances.
+
+If it still doesn't appear: go to instance 2's Connect tab → "↺ Re-sync all my data". This pushes Maria's identity anchor fresh to instance 1's relay, triggering `ingestIdentityAnchor` live (not from the dedup-guarded raw store), which will call `tryAutoAliasContact` and register the alias immediately.
+
+### Gotcha #66 — Auto-alias requires replay after contacts load
+
+`tryAutoAliasContact` only works when `_getContactNpubs()` returns the correct contact list. On session restore, contacts are loaded asynchronously after the relay starts. Any identity anchor that arrived during a previous session (and is now in the raw store) must be re-processed after contacts load — that's what `replayStoredIdentityAnchors` does. Without this replay, the auto-alias only fires for anchors received *live* (after contacts are in memory), not for anchors already stored.
+
+### Version: v1.0.98 | Tests: 681/681 | TypeScript: clean | Build: clean
