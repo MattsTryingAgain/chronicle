@@ -113,7 +113,7 @@ interface ActionPanelProps {
 type ActionPanelView = 'main' | 'photos' | 'stories'
 
 function ActionPanel({ personId, rootPubkey, onClose, onMakeRoot, onTreeRefresh, onPersonDeleted }: ActionPanelProps) {
-  const { contacts, getAvatar, syncVersion } = useApp()
+  const { contacts, getAvatar, syncVersion, session } = useApp()
   const [profileModal, setProfileModal] = useState<'view' | 'edit' | null>(null)
   const [subPanel, setSubPanel] = useState<ActionPanelView>('main')
   void syncVersion // causes re-render when avatar/story is added
@@ -185,14 +185,15 @@ function ActionPanel({ personId, rootPubkey, onClose, onMakeRoot, onTreeRefresh,
           <ActionButton icon="📄" label="Documents"          description="Birth certificates, records and sources" onClick={() => {}} comingSoon />
           <ActionButton icon="🌍" label="Timeline"           description="Life events on a timeline"             onClick={() => {}} comingSoon />
         </div>
-        {/* "Make root" only shown for connected contacts — seeing the tree from
-            another family member's perspective is the use case. For ancestors
-            and other local entries, roots are changed via the People list. */}
-        {isContact && !isRoot && (
+        {/* Show perspective switch for connected contacts and for the session user's
+            own node (so clicking yourself while on someone else's tree brings you home). */}
+        {(isContact || personId === session?.npub) && !isRoot && (
           <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-soft)' }}>
             <button className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center' }}
               onClick={() => { onMakeRoot(personId); onClose() }}>
-              View tree from {person.displayName}'s perspective
+              {personId === session?.npub
+                ? '↩ Return to my tree'
+                : `View tree from ${person.displayName}'s perspective`}
             </button>
           </div>
         )}
@@ -260,7 +261,7 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
   const [truncated, setTruncated]       = useState(false)
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null)
   const [treeVersion, setTreeVersion] = useState(0)
-  const { syncVersion, getAvatar } = useApp()
+  const { syncVersion, getAvatar, session } = useApp()
 
   const handleClosePanel  = useCallback(() => setSelectedPersonId(null), [])
   const handleMakeRoot    = useCallback((pk: string) => onSelectPerson?.(pk), [onSelectPerson])
@@ -633,6 +634,18 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
           <LegendItem color="var(--gold)" dash="6,3" label="Partner / divorced" />
           <LegendItem color="#c5b89a"    dash="4,4" label="Sensitive" />
         </div>
+        {rootPubkey !== session?.npub && session?.npub && (
+          <button
+            onClick={() => onSelectPerson?.(session.npub)}
+            style={{
+              background: 'none', border: '1px solid var(--border-soft)', borderRadius: 6,
+              padding: '3px 10px', cursor: 'pointer', fontSize: 12, color: 'var(--navy)',
+              fontWeight: 500, display: 'flex', alignItems: 'center', gap: 5,
+            }}
+          >
+            ↩ My tree
+          </button>
+        )}
         <span style={{ color: 'var(--border)', fontSize: 11 }}>Scroll to zoom · Drag to pan · Click to select</span>
       </div>
 

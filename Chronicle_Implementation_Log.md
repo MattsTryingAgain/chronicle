@@ -1967,3 +1967,24 @@ If the tree was built before sync fixed the missing kinds, a **"Re-sync all my d
 `publishEvent` calls `store.addRawEvent` which marks the event as seen. Any subsequent call to `ingestEvent` will hit the dedup guard and return false. For media events (avatar, story) that need to land in the in-memory media caches, always call `ingestAvatarEvent` or `ingestStoryEvent` **before** calling `publishEvent`.
 
 ### Version: v1.0.94 | Tests: 678/678 | TypeScript: clean | Build: clean
+
+---
+
+## v1.0.95 — Tree perspective navigation: "My tree" button + own-node return
+
+### Bugs fixed
+
+**Bug 1 — No way to return to own tree after switching perspective**
+Root cause: the "View tree from X's perspective" button was hidden when `isRoot` (you're already viewing from that person), but there was no persistent button to return to your own tree once you'd switched. The only way back was to find your own node in the tree and click it — but your node might not even be visible from the other person's perspective.
+
+Fix: added a **"↩ My tree" button** to the tree toolbar. It appears whenever `rootPubkey !== session?.npub` (i.e. you're viewing from someone else's perspective) and fires `onSelectPerson(session.npub)` to snap back immediately. The button is styled as a small outlined button on the left of the toolbar legend area.
+
+**Bug 2 — "View tree from X's perspective" not shown for your own node**
+Root cause: the ActionPanel's perspective-switch button was gated on `isContact` — only contacts triggered it. If you navigated to someone else's tree and your own node was visible, clicking it showed the edit/profile actions but not a "return home" option.
+
+Fix: the button condition is now `(isContact || personId === session?.npub) && !isRoot`. When you click your own node while on someone else's tree, the button reads **"↩ Return to my tree"** instead of "View tree from X's perspective". Both the toolbar button and this node button call the same `onMakeRoot(session.npub)` path.
+
+### Files changed
+- `src/components/FamilyTreeView.tsx` — toolbar "↩ My tree" button; ActionPanel session-aware perspective button
+
+### Version: v1.0.95 | Tests: 678/678 | TypeScript: clean | Build: clean
