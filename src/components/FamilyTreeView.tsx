@@ -627,12 +627,12 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
       const minY = Math.min(...ys) - NODE_H / 2 - pad
       const maxY = Math.max(...ys) + NODE_H / 2 + pad
       const scale = Math.min(0.95, width / (maxX - minX), height / (maxY - minY))
-      // Centre the view on the root node (always at x=0, y=0 in layout coords).
-      // This keeps the root horizontally centred regardless of graph asymmetry.
-      // Vertical: root at 60% down so ancestors (above) have room to show.
-      // D3 zoomIdentity.translate(tx,ty).scale(s) maps layout origin to (tx,ty).
+      // Horizontal: centre on root node (layout x=0), not bounding-box midpoint.
+      // This keeps the root centred regardless of left/right asymmetry.
+      // Vertical: centre the full bounding box so nothing is clipped.
+      const cy = (minY + maxY) / 2
       svg.call(zoom.transform, d3.zoomIdentity
-        .translate(width / 2, height * 0.6)
+        .translate(width / 2, height / 2 - scale * cy)
         .scale(scale))
     }
   }, [rootPubkey, selectedPersonId, treeVersion, syncVersion])

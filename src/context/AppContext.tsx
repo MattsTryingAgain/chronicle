@@ -260,7 +260,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const ownEvents = store.getAllRawEvents()
         console.log(`[connectToRelay] connected to ${url}, pushing ${ownEvents.length} own events, fetching remote`)
         // Pull events from this relay authored by known pubkeys (including contacts)
-        fetchOnConnect(client).then(() => { replayStoredFactClaims(); replayStoredMediaEvents() }).catch((e) => console.error('[connectToRelay] fetchOnConnect error:', e))
+        fetchOnConnect(client).then(() => { replayStoredFactClaims(); replayStoredMediaEvents(); setSyncVersion(v => v + 1) }).catch((e) => console.error('[connectToRelay] fetchOnConnect error:', e))
         startSync(client)
         // Push our own events to this relay so the remote instance can see our tree data
         for (const event of ownEvents) {
@@ -296,7 +296,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       for (const [url] of Object.entries(poolRef.current.getStatuses())) {
         const client = poolRef.current.add(url)
         if (client.getStatus() === 'connected') {
-          fetchOnConnect(client).then(() => { replayStoredFactClaims(); replayStoredMediaEvents() }).catch(() => {})
+          fetchOnConnect(client).then(() => { replayStoredFactClaims(); replayStoredMediaEvents(); setSyncVersion(v => v + 1) }).catch(() => {})
         }
       }
     }
@@ -570,7 +570,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setRelayStatuses({ ...pool.getStatuses() })
       if (status === 'connected' && !syncUnsubRef.current) {
         setSyncStatus('syncing')
-        fetchOnConnect(client).then(() => { replayStoredFactClaims(); replayStoredMediaEvents(); setSyncStatus('done') }).catch(() => setSyncStatus('error'))
+        fetchOnConnect(client).then(() => { replayStoredFactClaims(); replayStoredMediaEvents(); setSyncStatus('done'); setSyncVersion(v => v + 1) }).catch(() => setSyncStatus('error'))
         syncUnsubRef.current = startSync(client)
       }
     })

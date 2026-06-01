@@ -2115,3 +2115,27 @@ If it still doesn't appear: go to instance 2's Connect tab → "↺ Re-sync all 
 `tryAutoAliasContact` only works when `_getContactNpubs()` returns the correct contact list. On session restore, contacts are loaded asynchronously after the relay starts. Any identity anchor that arrived during a previous session (and is now in the raw store) must be re-processed after contacts load — that's what `replayStoredIdentityAnchors` does. Without this replay, the auto-alias only fires for anchors received *live* (after contacts are in memory), not for anchors already stored.
 
 ### Version: v1.0.98 | Tests: 681/681 | TypeScript: clean | Build: clean
+
+---
+
+## v1.0.99 — Tree not clipping; avatar shows immediately on session start
+
+### Bugs fixed
+
+**Bug 1 — Tree cut off at bottom after v1.0.98**
+Root cause: the auto-fit change placed the root at a fixed `height * 0.6` vertical position regardless of the actual tree height below the root. For trees with many descendants, the bottom nodes were placed below the viewport.
+
+Fix: hybrid approach — horizontal translation centres on the root node (layout x=0 → screen x=width/2), vertical translation centres the full bounding box in the viewport (`height/2 - scale * cy` where `cy` is the bounding box midpoint y). This guarantees nothing is clipped while keeping the root horizontally centred.
+
+**Bug 2 — Avatar not showing on own tree (instance 2) or after perspective switch**
+Root cause: `_avatarStore` is populated by `replayStoredMediaEvents()`, which is called in the `fetchOnConnect` completion chain. However, `setSyncVersion` was NOT called after this chain on the local relay's `fetchOnConnect`. Components that read `getAvatar` (ActionPanel, ProfileCard, TreeView PersonAvatar) only re-render when `syncVersion` changes. Without the bump, they rendered stale (empty avatar) and never re-rendered to show the avatar.
+
+The window: session starts → `setScreen('main')` → tree renders immediately → ActionPanel opens → `getAvatar` returns undefined (store empty). `fetchOnConnect` completes ~1 second later → `replayStoredMediaEvents` populates `_avatarStore` → but no `setSyncVersion` bump → components don't re-render → avatar stays invisible until an unrelated sync event arrives.
+
+Fix: added `setSyncVersion(v => v + 1)` to all three `fetchOnConnect` completion chains (local relay, `connectToRelay`, `addContact` relay loop).
+
+### Files changed
+- `src/components/FamilyTreeView.tsx` — auto-fit: horizontal root-centred, vertical bounding-box-centred
+- `src/context/AppContext.tsx` — all three `fetchOnConnect` chains now call `setSyncVersion(v => v + 1)` after `replayStoredMediaEvents`
+
+### Version: v1.0.99 | Tests: 681/681 | TypeScript: clean | Build: clean
