@@ -595,14 +595,40 @@ export function replayPendingJoinRequests(): void {
 const _avatarStore = new Map<string, PersonAvatar>()
 const _storyStore = new Map<string, PersonStory>()  // keyed by eventId
 
+/**
+ * Collect all IDs that might refer to the same person as personId:
+ *   - the personId itself
+ *   - any remote IDs for which personId is the local canonical
+ *   - the local canonical for personId if it is itself a remote alias
+ * This ensures media stored under any alias is found regardless of
+ * which UUID was in scope when the event was ingested.
+ */
+function allIdsForPerson(personId: string): Set<string> {
+  const ids = new Set<string>([personId])
+  // If personId is a remote alias, add the canonical local ID
+  const canonical = store.resolvePersonId(personId)
+  if (canonical && canonical !== personId) ids.add(canonical)
+  // Add all remote IDs registered under the canonical (or personId itself)
+  const root = canonical ?? personId
+  for (const alias of store.getAliasesFor(root)) {
+    ids.add(alias.remoteId)
+  }
+  return ids
+}
+
 export function getAvatar(personId: string): PersonAvatar | undefined {
-  return _avatarStore.get(personId)
+  for (const id of allIdsForPerson(personId)) {
+    const avatar = _avatarStore.get(id)
+    if (avatar) return avatar
+  }
+  return undefined
 }
 
 export function getStoriesForPerson(personId: string): PersonStory[] {
+  const ids = allIdsForPerson(personId)
   const result: PersonStory[] = []
   for (const story of _storyStore.values()) {
-    if (story.personId === personId) result.push(story)
+    if (ids.has(story.personId)) result.push(story)
   }
   return result.sort((a, b) => b.createdAt - a.createdAt)
 }

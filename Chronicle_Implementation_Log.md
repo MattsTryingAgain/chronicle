@@ -1988,3 +1988,46 @@ Fix: the button condition is now `(isContact || personId === session?.npub) && !
 - `src/components/FamilyTreeView.tsx` — toolbar "↩ My tree" button; ActionPanel session-aware perspective button
 
 ### Version: v1.0.95 | Tests: 678/678 | TypeScript: clean | Build: clean
+
+---
+
+## v1.0.96 — Stories grouped under wrong person; contact badge alias-aware; perspective button in panel
+
+### Bugs fixed
+
+**Bug 1 — Stories and avatars grouped under wrong person (e.g. all under Matt)**
+Root cause: `getStoriesForPerson(id)` and `getAvatar(id)` did exact-ID lookups against the media stores. When two instances independently created the same person (different UUIDs or one UUID + one npub), stories written for person A's ID couldn't be found when queried by person B's ID — even though both IDs referred to the same real individual.
+For the session user specifically: their person ID is their npub. If they also exist in the store as a UUID (created by another instance when adding them as a relative), stories filed under the npub are invisible when the tree traverses to the UUID node and queries stories with that UUID.
+
+Fix: new helper `allIdsForPerson(personId)` in `relaySync.ts` — builds a `Set<string>` of all IDs for a person by checking `store.resolvePersonId` (remote alias → local canonical) and `store.getAliasesFor` (all remote IDs for a local canonical). `getAvatar` iterates all IDs and returns the first match. `getStoriesForPerson` filters stories that match any ID in the set.
+
+**Bug 2 — "View tree from X's perspective" not shown for contacts whose node ID is a UUID alias**
+Root cause: `isContact` checked `contacts.some(c => c.npub === personId)` — exact match. If the contact's node ID was a UUID (created before their identity anchor arrived), this never matched.
+
+Fix: `ActionPanel` now builds `personAliasIds` (same set logic as the media fix) and checks `contacts.some(c => personAliasIds.has(c.npub))`.
+
+**Bug 3 — Switching to contact's perspective using UUID root instead of npub**
+Root cause: `onMakeRoot(personId)` was called with the node's ID, which might be a UUID. `traverseGraph` starting from a UUID finds no relationships if the contact's relationships are indexed under their npub.
+
+Fix: perspective button now resolves to the contact's actual npub: `contacts.find(c => personAliasIds.has(c.npub))?.npub ?? personId`.
+
+**Bug 4 — "↩ My tree" / "↩ Return to my tree" button was in the toolbar (wrong place)**
+Moved into the ActionPanel as a persistent footer button — visible whenever `rootPubkey !== session?.npub`, regardless of which node is selected. Styled as `btn-ghost` to distinguish it from the contact perspective button (`btn-outline`). The toolbar is back to information-only.
+
+Also cleaned up: the "View tree from X's perspective" button no longer shows `↩ Return to my tree` label for your own node — the dedicated footer handles that case.
+
+### New tests (3)
+`src/lib/media.test.ts` — `alias-aware media lookup`:
+- `getStoriesForPerson` finds stories filed under a remote alias ID when queried via local UUID
+- `getAvatar` finds avatar filed under a remote alias ID when queried via local UUID
+- `getStoriesForPerson` via remote npub finds stories filed under local UUID
+
+### Files changed
+- `src/lib/relaySync.ts` — `allIdsForPerson` helper; alias-aware `getAvatar` and `getStoriesForPerson`
+- `src/components/FamilyTreeView.tsx` — alias-aware `isContact`; npub-resolved `onMakeRoot`; "↩ Return to my tree" as panel footer; toolbar restored to display-only
+- `src/lib/media.test.ts` — 3 new alias tests; `ingestAvatarEvent`/`ingestStoryEvent` added to imports
+
+### Gotcha #63 — Media lookups must be alias-aware
+`getAvatar` and `getStoriesForPerson` must check all alias IDs for a person, not just the exact ID passed. Two instances can have the same real person under different IDs. Use `allIdsForPerson(id)` before querying the media stores. Same principle applies to any future per-person media index.
+
+### Version: v1.0.96 | Tests: 681/681 | TypeScript: clean | Build: clean

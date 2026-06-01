@@ -19,6 +19,8 @@ import {
 import { estimateBase64Size } from '../lib/media'
 import {
   ingestEvent,
+  ingestAvatarEvent,
+  ingestStoryEvent,
   getAvatar,
   getStoriesForPerson,
   _resetMediaStore,
@@ -290,5 +292,71 @@ describe('relaySync media ingesters', () => {
 
     expect(getAvatar(PERSON_ID)).toBeUndefined()
     expect(getStoriesForPerson(PERSON_ID)).toHaveLength(0)
+  })
+})
+
+// ─── Alias-aware media lookup ─────────────────────────────────────────────────
+
+describe('alias-aware media lookup', () => {
+  beforeEach(() => {
+    _resetMediaStore()
+    store.clearAll()
+  })
+
+  it('getStoriesForPerson finds stories filed under an alias ID', () => {
+    const kp = makeKeypair()
+    // Two IDs for the same person (local UUID + remote npub from another instance)
+    const localUuid = '550e8400-e29b-41d4-a716-000000000010'
+    const remoteNpub = kp.npub
+
+    store.upsertPerson({ id: localUuid, displayName: 'Maria', isLiving: true, createdAt: 1000 })
+    // Register remoteNpub as an alias of localUuid (simulates receiving identity anchor)
+    store.addPersonAlias({ localId: localUuid, remoteId: remoteNpub, creatorNpub: remoteNpub, createdAt: 1000 })
+
+    // Story event uses remoteNpub as person_id (written by the remote instance)
+    const event = buildStoryEvent(kp.npub, kp.nsec, remoteNpub, 'Maria story', 'Content')
+    ingestStoryEvent(event)
+
+    // Query via the local UUID — should still find the story
+    const stories = getStoriesForPerson(localUuid)
+    expect(stories).toHaveLength(1)
+    expect(stories[0].title).toBe('Maria story')
+  })
+
+  it('getAvatar finds avatar filed under an alias ID', () => {
+    const kp = makeKeypair()
+    const localUuid = '550e8400-e29b-41d4-a716-000000000011'
+    const remoteNpub = kp.npub
+
+    store.upsertPerson({ id: localUuid, displayName: 'Maria', isLiving: true, createdAt: 1000 })
+    store.addPersonAlias({ localId: localUuid, remoteId: remoteNpub, creatorNpub: remoteNpub, createdAt: 1000 })
+
+    // Avatar filed under remoteNpub
+    const event = buildAvatarEvent(kp.npub, kp.nsec, remoteNpub, SAMPLE_DATA_URL, 'image/jpeg', 512)
+    ingestAvatarEvent(event)
+
+    // Query via localUuid — should find it
+    const avatar = getAvatar(localUuid)
+    expect(avatar).toBeDefined()
+    expect(avatar!.dataUrl).toBe(SAMPLE_DATA_URL)
+  })
+
+  it('getStoriesForPerson via canonical also finds stories filed under alias', () => {
+    const kp = makeKeypair()
+    const localUuid = '550e8400-e29b-41d4-a716-000000000012'
+    const remoteNpub = kp.npub
+
+    store.upsertPerson({ id: localUuid, displayName: 'Maria', isLiving: true, createdAt: 1000 })
+    store.addPersonAlias({ localId: localUuid, remoteId: remoteNpub, creatorNpub: remoteNpub, createdAt: 1000 })
+
+    // Story filed under localUuid
+    const kp2 = makeKeypair()
+    const event = buildStoryEvent(kp2.npub, kp2.nsec, localUuid, 'Local story', 'Content')
+    ingestStoryEvent(event)
+
+    // Query via remoteNpub — should also find it
+    const stories = getStoriesForPerson(remoteNpub)
+    expect(stories).toHaveLength(1)
+    expect(stories[0].title).toBe('Local story')
   })
 })
