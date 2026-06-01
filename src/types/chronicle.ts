@@ -29,6 +29,7 @@ export const EventKind = {
   // Stage 5: privacy layer
   FAMILY_KEY_ADMISSION: 30094,
   BLOSSOM_REF: 30095,
+  STORY: 30096,
 } as const
 
 export type EventKindValue = (typeof EventKind)[keyof typeof EventKind]
@@ -214,5 +215,40 @@ export interface KeyRevocation {
   fromTimestamp: number
   attestedBy: string[]   // npubs
   revokedByNpub: string  // recovery contact who published
+  createdAt: number
+}
+
+// ─── Media Phase 1 ────────────────────────────────────────────────────────────
+
+/**
+ * An avatar/profile picture stored inline in a kind 30095 event.
+ * Image data is base64-encoded in the event content field.
+ * Max 200 KB after client-side resize to ≤512px.
+ */
+export interface PersonAvatar {
+  /** Person ID (UUID for ancestors, npub for living user) */
+  personId: string
+  /** data URL including MIME prefix, e.g. "data:image/jpeg;base64,..." */
+  dataUrl: string
+  /** MIME type — 'image/jpeg' or 'image/png' */
+  mimeType: 'image/jpeg' | 'image/png'
+  /** Approximate byte size of the base64 payload */
+  size: number
+  /** Unix timestamp of the event */
+  createdAt: number
+  /** Event ID so we can deduplicate on ingest */
+  eventId: string
+}
+
+/**
+ * A story/memory stored as a kind 30096 event.
+ * Content is plain text in the event content field.
+ */
+export interface PersonStory {
+  eventId: string
+  personId: string
+  title: string
+  content: string
+  authorNpub: string
   createdAt: number
 }

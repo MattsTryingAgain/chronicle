@@ -10,6 +10,8 @@ import { resolveAllFields } from '../lib/confidence'
 import { getRelationshipsFor } from '../lib/graph'
 import type { Person, FactClaim, Endorsement, ConflictState, FactField } from '../types/chronicle'
 import { store } from '../lib/storage'
+import { AvatarDisplay } from './PhotosPanel'
+import { useApp } from '../context/AppContext'
 
 interface ProfileCardProps {
   person: Person
@@ -171,12 +173,8 @@ export function ProfileCard({
     [claims, endorsements],
   )
 
-  const initials = person.displayName
-    .split(' ')
-    .map(w => w[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase()
+  const { getAvatar } = useApp()
+  const avatar = getAvatar(person.id)
 
   const expandedResolution = expandedField
     ? resolutions.find(r => r.field === expandedField) ?? null
@@ -187,7 +185,7 @@ export function ProfileCard({
       <div className="profile-card">
         {/* Header */}
         <div className="profile-card-header">
-          <div className="profile-card-avatar">{initials}</div>
+          <AvatarDisplay dataUrl={avatar?.dataUrl ?? null} name={person.displayName} size={80} />
           <div>
             <div className="profile-card-name">{person.displayName}</div>
             <div className="profile-card-living">

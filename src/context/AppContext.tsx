@@ -26,8 +26,9 @@ import { generateUserKeyMaterial, importKeyMaterial, nsecToHex, npubToHex } from
 import { encryptWithPassword, decryptWithPassword } from '../lib/storage'
 import { RelayPool, type RelayStatus } from '../lib/relay'
 import { broadcastQueue } from '../lib/queue'
-import { startSync, fetchOnConnect, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, replayStoredFactClaims, setContactPubkeysProvider, setSyncUpdateHandler } from '../lib/relaySync'
-import { buildJoinRequestEvent, buildJoinAcceptEvent, buildRelationshipClaim, buildFactClaim, buildIdentityAnchor } from '../lib/eventBuilder'
+import { startSync, fetchOnConnect, ingestEvent, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, replayStoredFactClaims, setContactPubkeysProvider, setSyncUpdateHandler, getAvatar as rsGetAvatar, getStoriesForPerson as rsGetStoriesForPerson, replayStoredMediaEvents } from '../lib/relaySync'
+import { buildJoinRequestEvent, buildJoinAcceptEvent, buildRelationshipClaim, buildFactClaim, buildIdentityAnchor, buildAvatarEvent, buildStoryEvent } from '../lib/eventBuilder'
+import { processAvatarImage } from '../lib/media'
 import { ContactListManager, type Contact } from '../lib/contactList'
 import { MergeQueue, type SyncSession } from '../lib/syncMerge'
 import { TrustRevocationStore, type TrustRevocation } from '../lib/trustRevocation'
@@ -149,6 +150,15 @@ interface AppContextValue {
   repushAllEvents: () => void
   /** Immediately triggers a duplicate scan regardless of incoming events. */
   triggerDupesScan: () => void
+  // Media Phase 1
+  /** Upload and publish an avatar for a person. */
+  setAvatar: (personId: string, file: File) => Promise<void>
+  /** Get the current avatar for a person (if any). */
+  getAvatar: (personId: string) => import('../types/chronicle').PersonAvatar | undefined
+  /** Publish a story for a person. */
+  addStory: (personId: string, title: string, content: string) => Promise<void>
+  /** Get all stories for a person. */
+  getStoriesForPerson: (personId: string) => import('../types/chronicle').PersonStory[]
 }
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -250,7 +260,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const ownEvents = store.getAllRawEvents()
         console.log(`[connectToRelay] connected to ${url}, pushing ${ownEvents.length} own events, fetching remote`)
         // Pull events from this relay authored by known pubkeys (including contacts)
-        fetchOnConnect(client).then(() => replayStoredFactClaims()).catch((e) => console.error('[connectToRelay] fetchOnConnect error:', e))
+        fetchOnConnect(client).then(() => { replayStoredFactClaims(); replayStoredMediaEvents() }).catch((e) => console.error('[connectToRelay] fetchOnConnect error:', e))
         startSync(client)
         // Push our own events to this relay so the remote instance can see our tree data
         for (const event of ownEvents) {
@@ -286,7 +296,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       for (const [url] of Object.entries(poolRef.current.getStatuses())) {
         const client = poolRef.current.add(url)
         if (client.getStatus() === 'connected') {
-          fetchOnConnect(client).then(() => replayStoredFactClaims()).catch(() => {})
+          fetchOnConnect(client).then(() => { replayStoredFactClaims(); replayStoredMediaEvents() }).catch(() => {})
         }
       }
     }
@@ -479,6 +489,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             // Backfill display names for any person stub whose name fact claim
             // was stored before the stub existed (shows as 'Unknown').
             replayStoredFactClaims()
+            replayStoredMediaEvents()
             setHasStoredIdentity(true)
             setScreen('onboarding-unlock')
           }
@@ -531,6 +542,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setContactPubkeysProvider(() => contactMgrRef.current.getAll().map(c => c.npub))
     setSyncUpdateHandler(() => {
       replayStoredFactClaims()
+      replayStoredMediaEvents()
       setSyncVersion(v => v + 1)
       // Persist after every sync batch so raw events and updated display names
       // survive app restarts. Without this, synced data (names, facts, relationships)
@@ -558,7 +570,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setRelayStatuses({ ...pool.getStatuses() })
       if (status === 'connected' && !syncUnsubRef.current) {
         setSyncStatus('syncing')
-        fetchOnConnect(client).then(() => { replayStoredFactClaims(); setSyncStatus('done') }).catch(() => setSyncStatus('error'))
+        fetchOnConnect(client).then(() => { replayStoredFactClaims(); replayStoredMediaEvents(); setSyncStatus('done') }).catch(() => setSyncStatus('error'))
         syncUnsubRef.current = startSync(client)
       }
     })
@@ -874,6 +886,49 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMediaCacheEntries((prev) => [...prev, { ref, status: 'pending' as const }])
   }, [])
 
+  // ── Media Phase 1 ──────────────────────────────────────────────────────────
+
+  const setAvatar = useCallback(async (personId: string, file: File) => {
+    if (!session) throw new Error('Not logged in')
+    const processed = await processAvatarImage(file)
+    const event = buildAvatarEvent(
+      session.npub,
+      session.nsec,
+      personId,
+      processed.dataUrl,
+      processed.mimeType,
+      processed.size,
+    )
+    publishEvent(event as unknown as ChronicleEvent)
+    // Also ingest locally so UI updates immediately without waiting for relay round-trip
+    ingestEvent(event as unknown as ChronicleEvent)
+    setSyncVersion(v => v + 1)
+    await persistStore()
+  }, [session, publishEvent])
+
+  const addStory = useCallback(async (personId: string, title: string, storyContent: string) => {
+    if (!session) throw new Error('Not logged in')
+    const event = buildStoryEvent(
+      session.npub,
+      session.nsec,
+      personId,
+      title,
+      storyContent,
+    )
+    publishEvent(event as unknown as ChronicleEvent)
+    ingestEvent(event as unknown as ChronicleEvent)
+    setSyncVersion(v => v + 1)
+    await persistStore()
+  }, [session, publishEvent])
+
+  const getAvatarForPerson = useCallback((personId: string) => {
+    return rsGetAvatar(personId)
+  }, [])
+
+  const getStoriesForPersonCb = useCallback((personId: string) => {
+    return rsGetStoriesForPerson(personId)
+  }, [])
+
   return (
     <AppContext.Provider
       value={{
@@ -925,6 +980,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         repairRelationships,
         repushAllEvents,
         triggerDupesScan,
+        // Media Phase 1
+        setAvatar,
+        getAvatar: getAvatarForPerson,
+        addStory,
+        getStoriesForPerson: getStoriesForPersonCb,
       }}
     >
       {children}

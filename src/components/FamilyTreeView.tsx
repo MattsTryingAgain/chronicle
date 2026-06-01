@@ -38,6 +38,8 @@ import { resolveAllFields } from '../lib/confidence'
 import { useApp } from '../context/AppContext'
 import type { Person } from '../types/chronicle'
 import { PersonProfileModal } from './PersonProfileModal'
+import PhotosPanel, { AvatarDisplay } from './PhotosPanel'
+import StoriesPanel from './StoriesPanel'
 import {
   NODE_W, NODE_H,
   normaliseEdges,
@@ -53,6 +55,7 @@ interface NodeData {
   birthYear: string | null
   deathYear: string | null
   hasConflict: boolean
+  hasAvatar: boolean
   isLiving: boolean
   x: number
   y: number
@@ -71,7 +74,7 @@ function extractYear(val: string | null): string | null {
   return m ? m[1] : null
 }
 
-function buildNodeData(personId: string): NodeData {
+function buildNodeData(personId: string, getAvatarFn: (id: string) => { dataUrl: string } | undefined): NodeData {
   // Resolve alias: if personId is a remote UUID, map to local person record
   const localId = store.resolvePersonId(personId) ?? personId
   const person: Person | undefined = store.getPerson(localId)
@@ -81,6 +84,7 @@ function buildNodeData(personId: string): NodeData {
   const hasConflict = resolutions.some(r => r.conflictState === 'hard' || r.conflictState === 'soft')
   const born = resolutions.find(r => r.field === 'born')?.winningClaim?.value ?? null
   const died = resolutions.find(r => r.field === 'died')?.winningClaim?.value ?? null
+  const hasAvatar = !!getAvatarFn(localId)?.dataUrl
   return {
     id: personId,
     displayName: person?.displayName ?? 'Unknown',
@@ -88,6 +92,7 @@ function buildNodeData(personId: string): NodeData {
     deathYear: extractYear(died),
     hasConflict,
     isLiving: person?.isLiving ?? false,
+    hasAvatar,
     x: 0,
     y: 0,
   }
@@ -105,9 +110,13 @@ interface ActionPanelProps {
   onPersonDeleted: (personId: string) => void
 }
 
+type ActionPanelView = 'main' | 'photos' | 'stories'
+
 function ActionPanel({ personId, rootPubkey, onClose, onMakeRoot, onTreeRefresh, onPersonDeleted }: ActionPanelProps) {
-  const { contacts } = useApp()
+  const { contacts, getAvatar, syncVersion } = useApp()
   const [profileModal, setProfileModal] = useState<'view' | 'edit' | null>(null)
+  const [subPanel, setSubPanel] = useState<ActionPanelView>('main')
+  void syncVersion // causes re-render when avatar/story is added
 
   const person = store.getPerson(personId)
   if (!person) return null
@@ -116,13 +125,14 @@ function ActionPanel({ personId, rootPubkey, onClose, onMakeRoot, onTreeRefresh,
   const isContact = contacts.some(c => c.npub === personId)
   const isRoot = personId === rootPubkey
 
-  const initials = person.displayName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
   const claims = store.getClaimsForPerson(personId)
   const endorsements = store.getAllEndorsements()
   const resolutions = resolveAllFields(claims, endorsements)
   const born  = resolutions.find(r => r.field === 'born')?.winningClaim?.value
   const died  = resolutions.find(r => r.field === 'died')?.winningClaim?.value
   const place = resolutions.find(r => r.field === 'birthplace')?.winningClaim?.value
+
+  const avatar = getAvatar(person.id)
 
   return (
     <>
@@ -132,11 +142,20 @@ function ActionPanel({ personId, rootPubkey, onClose, onMakeRoot, onTreeRefresh,
         borderLeft: '1px solid var(--border-soft)',
         boxShadow: '-4px 0 24px rgba(15,30,53,0.08)',
         display: 'flex', flexDirection: 'column', zIndex: 10,
+        overflow: 'hidden',
       }}>
+        {/* Sub-panel routing */}
+        {subPanel === 'photos' && (
+          <PhotosPanel person={person} onBack={() => setSubPanel('main')} />
+        )}
+        {subPanel === 'stories' && (
+          <StoriesPanel person={person} onBack={() => setSubPanel('main')} />
+        )}
+        {subPanel === 'main' && (<>
         <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid var(--border-soft)', background: 'var(--cream)', position: 'relative' }}>
           <button onClick={onClose} style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-muted)', fontSize: 18, lineHeight: 1, padding: 4 }}>✕</button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'var(--navy)', color: 'var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, flexShrink: 0 }}>{initials}</div>
+            <AvatarDisplay dataUrl={avatar?.dataUrl ?? null} name={person.displayName} size={48} />
             <div>
               <div style={{ fontWeight: 600, fontSize: 16, color: 'var(--navy)', fontFamily: 'var(--font-display)' }}>{person.displayName}</div>
               <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 2 }}>
@@ -161,8 +180,8 @@ function ActionPanel({ personId, rootPubkey, onClose, onMakeRoot, onTreeRefresh,
           <ActionButton icon="✏️" label="Edit information"  description="Update facts, dates and relationships" onClick={() => setProfileModal('edit')} />
           <ActionButton icon="📋" label="View full profile" description="See all details and history"            onClick={() => setProfileModal('view')} />
           <div style={{ borderTop: '1px solid var(--border-soft)', margin: '4px 0' }} />
-          <ActionButton icon="🖼"  label="Photos & media"    description="View and add photos for this person"   onClick={() => {}} comingSoon />
-          <ActionButton icon="📖" label="Stories"            description="Personal stories and memories"         onClick={() => {}} comingSoon />
+          <ActionButton icon="🖼"  label="Photos & media"    description="View and add photos for this person"   onClick={() => setSubPanel('photos')} />
+          <ActionButton icon="📖" label="Stories"            description="Personal stories and memories"         onClick={() => setSubPanel('stories')} />
           <ActionButton icon="📄" label="Documents"          description="Birth certificates, records and sources" onClick={() => {}} comingSoon />
           <ActionButton icon="🌍" label="Timeline"           description="Life events on a timeline"             onClick={() => {}} comingSoon />
         </div>
@@ -177,6 +196,7 @@ function ActionPanel({ personId, rootPubkey, onClose, onMakeRoot, onTreeRefresh,
             </button>
           </div>
         )}
+        </>)}
       </div>
 
       {profileModal && (
@@ -240,7 +260,7 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
   const [truncated, setTruncated]       = useState(false)
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null)
   const [treeVersion, setTreeVersion] = useState(0)
-  const { syncVersion } = useApp()
+  const { syncVersion, getAvatar } = useApp()
 
   const handleClosePanel  = useCallback(() => setSelectedPersonId(null), [])
   const handleMakeRoot    = useCallback((pk: string) => onSelectPerson?.(pk), [onSelectPerson])
@@ -277,7 +297,7 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
 
     const nodeMap = new Map<string, NodeData>()
     for (const pk of nodes) {
-      const nd = buildNodeData(pk)
+      const nd = buildNodeData(pk, getAvatar)
       const p = posMap.get(pk) ?? { x: 0, y: 0 }
       nd.x = p.x; nd.y = p.y
       nodeMap.set(pk, nd)
@@ -544,6 +564,18 @@ export default function FamilyTreeView({ rootPubkey, onSelectPerson }: FamilyTre
     nodeElems.filter(d => d.isLiving)
       .append('circle')
       .attr('cx', NODE_W - 10).attr('cy', 10).attr('r', 3.5).attr('fill', '#4caf78')
+
+    // Gold camera icon indicator for nodes that have a profile photo
+    nodeElems.filter(d => d.hasAvatar)
+      .append('circle')
+      .attr('cx', 10).attr('cy', 10).attr('r', 5)
+      .attr('fill', 'var(--gold)').attr('opacity', 0.9)
+    nodeElems.filter(d => d.hasAvatar)
+      .append('text')
+      .attr('x', 10).attr('y', 14)
+      .attr('text-anchor', 'middle')
+      .attr('font-size', 7)
+      .text('📷')
 
     nodeElems.append('text')
       .attr('x', NODE_W / 2).attr('y', 26)

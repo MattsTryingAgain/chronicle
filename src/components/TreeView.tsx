@@ -23,8 +23,20 @@ function SearchIcon() {
   )
 }
 
-function PersonAvatar({ name }: { name: string }) {
-  const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+function PersonAvatar({ name, personId }: { name: string; personId: string }) {
+  const { getAvatar } = useApp()
+  const avatar = getAvatar(personId)
+  if (avatar?.dataUrl) {
+    return (
+      <img
+        src={avatar.dataUrl}
+        alt={name}
+        className="person-avatar"
+        style={{ borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--gold)' }}
+      />
+    )
+  }
+  const initials = name.split(' ').map(w => w[0]).filter(Boolean).join('').slice(0, 2).toUpperCase()
   return <div className="person-avatar">{initials}</div>
 }
 
@@ -40,7 +52,7 @@ function PersonListItem({ person, onClick }: { person: Person; onClick: () => vo
 
   return (
     <button className="person-list-item animate-in" onClick={onClick}>
-      <PersonAvatar name={person.displayName} />
+      <PersonAvatar name={person.displayName} personId={person.id} />
       <div style={{ flex: 1, textAlign: 'left' }}>
         <div className="person-name">{person.displayName}</div>
         {(dates || placeClaim?.value) && (

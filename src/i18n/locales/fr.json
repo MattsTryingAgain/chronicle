@@ -374,5 +374,30 @@
     "openSourceBody": "Chronicle est un logiciel open source, publié sous la licence MIT. Vous êtes libre d'inspecter le code, d'exécuter votre propre relais et de le modifier à votre convenance.",
     "licence": "Licence MIT",
     "schemaVersion": "Version du schéma"
+  },
+  "media": {
+    "photos": {
+      "title": "Photos et médias",
+      "addPhoto": "Ajouter une photo",
+      "noPhotos": "Aucune photo pour l'instant",
+      "uploadHint": "Télécharger une photo de profil (JPG ou PNG, max 200 Ko)",
+      "uploading": "Téléchargement…",
+      "uploadError": "Échec du téléchargement",
+      "changePhoto": "Changer de photo",
+      "avatarAlt": "Photo de profil de {{name}}"
+    },
+    "stories": {
+      "title": "Histoires",
+      "addStory": "Ajouter une histoire",
+      "noStories": "Aucune histoire pour l'instant",
+      "titleLabel": "Titre",
+      "titlePlaceholder": "ex. \"Rencontre à la ferme, 1962\"",
+      "contentLabel": "Histoire",
+      "contentPlaceholder": "Écrire un souvenir ou une histoire…",
+      "save": "Enregistrer",
+      "cancel": "Annuler",
+      "saving": "Enregistrement…",
+      "by": "par {{name}}"
+    }
   }
 }

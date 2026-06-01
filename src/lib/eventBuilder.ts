@@ -12,7 +12,7 @@
  *   nostr-tools internals and converted back immediately
  */
 
-import { signEvent, npubToHex } from './keys'
+import { signEvent, npubToHex, hexToNpub } from './keys'
 import { EventKind, SCHEMA_VERSION } from '../types/chronicle'
 import type {
   ChronicleEvent,
@@ -410,4 +410,111 @@ export function buildJoinAcceptEvent(
     content: '',
   }
   return sign(unsigned as UnsignedEvent, acceptorNsec)
+}
+
+// ─── Avatar (kind 30095 with type=avatar) ─────────────────────────────────────
+
+import type { PersonAvatar, PersonStory } from '../types/chronicle'
+
+/**
+ * Build and sign a kind 30095 avatar event.
+ * The image is stored as a data URL in the content field (base64, ≤200 KB).
+ * Tags carry: person_id, type, mime_type, size.
+ */
+export function buildAvatarEvent(
+  publisherNpub: string,
+  publisherNsec: string,
+  personId: string,
+  dataUrl: string,
+  mimeType: 'image/jpeg' | 'image/png',
+  size: number,
+): ChronicleEvent {
+  const tags: string[][] = [
+    ['person_id', personId],
+    ['type', 'avatar'],
+    ['mime_type', mimeType],
+    ['size', String(size)],
+    ['v', SCHEMA_VERSION],
+  ]
+  const unsigned = {
+    kind: EventKind.BLOSSOM_REF as number,
+    pubkey: npubToHex(publisherNpub),
+    created_at: now(),
+    tags,
+    content: dataUrl,
+  }
+  return sign(unsigned as UnsignedEvent, publisherNsec)
+}
+
+/**
+ * Parse a PersonAvatar from a raw kind 30095 event with type=avatar tag.
+ * Returns null if the event is not an avatar event or is malformed.
+ */
+export function parseAvatarEvent(event: ChronicleEvent): PersonAvatar | null {
+  if (event.kind !== EventKind.BLOSSOM_REF) return null
+  const type = getTag(event, 'type')
+  if (type !== 'avatar') return null
+  const personId = getTag(event, 'person_id')
+  if (!personId) return null
+  const mimeType = getTag(event, 'mime_type') as 'image/jpeg' | 'image/png' | null
+  if (!mimeType || (mimeType !== 'image/jpeg' && mimeType !== 'image/png')) return null
+  const size = parseInt(getTag(event, 'size') ?? '0', 10)
+  if (!event.content) return null
+  return {
+    personId,
+    dataUrl: event.content,
+    mimeType,
+    size,
+    createdAt: event.created_at,
+    eventId: event.id,
+  }
+}
+
+// ─── Story (kind 30096) ───────────────────────────────────────────────────────
+
+/**
+ * Build and sign a kind 30096 story event.
+ * The story text is in the content field.
+ * Tags carry: person_id, title.
+ */
+export function buildStoryEvent(
+  authorNpub: string,
+  authorNsec: string,
+  personId: string,
+  title: string,
+  content: string,
+): ChronicleEvent {
+  const tags: string[][] = [
+    ['person_id', personId],
+    ['title', title],
+    ['v', SCHEMA_VERSION],
+  ]
+  const unsigned = {
+    kind: EventKind.STORY as number,
+    pubkey: npubToHex(authorNpub),
+    created_at: now(),
+    tags,
+    content,
+  }
+  return sign(unsigned as UnsignedEvent, authorNsec)
+}
+
+/**
+ * Parse a PersonStory from a raw kind 30096 event.
+ * Returns null if the event is malformed.
+ */
+export function parseStoryEvent(event: ChronicleEvent): PersonStory | null {
+  if (event.kind !== EventKind.STORY) return null
+  const personId = getTag(event, 'person_id')
+  if (!personId) return null
+  const title = getTag(event, 'title') ?? ''
+  if (!event.content) return null
+  return {
+    eventId: event.id,
+    personId,
+    title,
+    content: event.content,
+    authorNpub: hexToNpub(event.pubkey),
+    createdAt: event.created_at,
+  }
 }

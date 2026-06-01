@@ -1739,3 +1739,179 @@ Fix: `buildNodeData` now calls `store.resolvePersonId(personId)` first and uses 
 `store.addRawEvent(event)` persists an event locally. It does NOT broadcast. Always use `publishEvent(event)` when an event should be visible to connected instances. The distinction matters in any code that builds events outside of the normal `AddPersonModal` → `publishEvent` flow.
 
 ### Version: v1.0.92 | Tests: 657/657 | TypeScript: clean | Build: clean
+
+---
+
+## ⚠️ NEXT SESSION HANDOFF — READ THIS FIRST
+
+### Last version pushed to GitHub: v1.0.92
+### Last tarball delivered: chronicle-v1_0_92.tar.gz
+### Tests: 657/657 | TypeScript: clean | Build: clean
+
+The tarball delivered at the END of this session is named **chronicle-v1_0_92-handoff.tar.gz** — this is the definitive starting point for the next session. It contains all work through v1.0.92 including the fixes below.
+
+---
+
+### What was accomplished in this session (May 2026)
+
+**Core rebuild: ancestor person IDs**
+- `Person.pubkey` → `Person.id` (UUID v4 for ancestors, session npub for living user)
+- `generateAncestorKeyPair()` deleted; ancestors created with `crypto.randomUUID()`
+- All event tags, store keys, graph edges, SQL columns updated throughout
+- Migration layer in `MemoryStore.deserialise()` and `deserialiseGraph()` handles old data
+
+**Alias model**
+- Each instance keeps its own UUID for an ancestor and records other known UUIDs as aliases
+- `store.addPersonAlias()`, `store.resolvePersonId()`, `store.getAllAliases()`
+- `areAliases(idA, idB)` in `graph.ts` — returns true if two IDs are in the same alias group
+- `resolveAliasIds(id)` returns a `Set<string>` of all known IDs for a person (not a winner)
+- `traverseGraph` now queries relationships for ALL alias IDs of each visited node
+
+**Relay persistence**
+- `relay/server.js` file-backed fallback: writes `relay-events.json` to `userData` on every insert
+
+**Sync fixes**
+- `persistStore()` called inside `setSyncUpdateHandler` — synced data survives restarts
+- `store.clearAll()` called before restore — no stale data from previous partial loads
+- `publishSelfEvents()` — publishes signed identity anchor + name fact claim for the session user on relay connect, so connected instances always see the current user's display name
+- Fixed stale closure: `publishSelfEventsRef` ref used in `connectToRelay` (empty deps)
+- Fixed: `publishSelfEvents` was calling `store.addRawEvent()` (local only) instead of `publishEvent()` (local + broadcast)
+
+**Person picker deduplication**
+- `AddPersonModal` deduplicates the relationship picker using `areAliases()` — only shows the best-data record when two persons are known aliases
+
+**Tree improvements**
+- `buildNodeData` resolves alias IDs before person/claim lookup
+- Action panel shows contact npub for connected family members
+
+---
+
+### What to work on next
+
+**Media Phase 1 — Profile pictures + stories**
+
+Infrastructure is already built (Stage 7): `blossom.ts`, `MediaCache`, `media_cache` SQLite table, kind 30095 event type. The "Photos & media", "Stories", "Documents", "Timeline" buttons in `FamilyTreeView.tsx` ActionPanel are marked "coming soon".
+
+Proposed implementation (agreed with Matt at end of May 2026 session):
+
+**Profile pictures:**
+- File picker in edit modal (PNG/JPG, resized to ≤512px client-side)
+- Image stored as base64 in event `content` field (kind 30095, `['type', 'avatar']` tag) — no Blossom HTTP server required for this phase; image data travels in the event itself
+- Cap at 200KB after resize
+- Display: 40px circular avatar in People tab list items; 48px in tree action panel; 80px in ProfileCard
+- Tree nodes: coloured ring indicator for people who have a photo (node too small for actual image)
+
+**Stories:**
+- Plain text events (kind 30096, needs reserving in `src/types/chronicle.ts`)
+- Tags: `['person_id', id]`, `['title', '...']`; content is story text
+- Simple write/read UI in the "Stories" panel
+
+**Defer to later:**
+- Videos and documents (need Blossom HTTP server, too large for event content)
+- Timeline view (separate UI work)
+- WebRTC peer-to-peer sync (still scaffolded only)
+- Mobile (Capacitor) — Stage 8
+
+---
+
+### Current version numbering
+- Last tag pushed: **v1.0.92**
+- Next version to use: **v1.0.93**
+- Pattern: `v1.0.x` patch increments, triggered by git tag push
+
+### Deployment reminder
+```bat
+cd C:\Users\Matt\Desktop\Websites\Chronicle\chronicle-export
+tar -xzf C:\Users\Matt\Desktop\Websites\Chronicle\<tarball>.tar.gz -C C:\Users\Matt\Desktop\Websites\Chronicle\
+git add -A
+git commit -m "vX.X.X — description"
+git push
+git tag vX.X.X
+git push origin vX.X.X
+```
+
+
+---
+
+## v1.0.93 — Media Phase 1: profile pictures + stories
+
+### What was built
+
+**New event kind: 30096 (STORY)**
+- Reserved in `src/types/chronicle.ts` alongside existing kinds
+- Plain-text story events: `['person_id', id]`, `['title', title]` tags; story text in content field
+
+**New types (`src/types/chronicle.ts`):**
+- `PersonAvatar` — holds `personId`, `dataUrl` (base64), `mimeType`, `size`, `createdAt`, `eventId`
+- `PersonStory` — holds `eventId`, `personId`, `title`, `content`, `authorNpub`, `createdAt`
+
+**New module: `src/lib/media.ts`**
+- `processAvatarImage(file)` — client-side resize to ≤512px, JPEG at 0.85 quality (retry at 0.65), hard limit 200 KB, throws if still over limit
+- `estimateBase64Size(dataUrl)` — estimates byte size of base64 payload portion
+- Constants: `AVATAR_MAX_PX = 512`, `AVATAR_MAX_BYTES = 200 * 1024`
+
+**New builders in `src/lib/eventBuilder.ts`:**
+- `buildAvatarEvent(publisherNpub, publisherNsec, personId, dataUrl, mimeType, size)` — kind 30095 with `type=avatar` tag
+- `parseAvatarEvent(event)` — extracts `PersonAvatar` from a kind 30095 event; returns null if not avatar type or malformed
+- `buildStoryEvent(authorNpub, authorNsec, personId, title, content)` — kind 30096
+- `parseStoryEvent(event)` — extracts `PersonStory` from kind 30096; returns null if malformed
+
+**`src/lib/relaySync.ts` additions:**
+- `ingestAvatarEvent` — ingests kind 30095 avatar events; keeps newest by `created_at` per person; resolves alias IDs
+- `ingestStoryEvent` — ingests kind 30096 story events; indexes by `eventId`, resolves alias IDs
+- Module-level `_avatarStore: Map<personId, PersonAvatar>` and `_storyStore: Map<eventId, PersonStory>`
+- `getAvatar(personId)` — returns current avatar for a person
+- `getStoriesForPerson(personId)` — returns all stories for a person, newest first
+- `replayStoredMediaEvents()` — replays raw events on session restore to repopulate media caches
+- `_resetMediaStore()` — for testing only
+- Both BLOSSOM_REF and STORY cases added to `ingestEvent` switch
+- `replayStoredMediaEvents()` wired into `setSyncUpdateHandler`, `fetchOnConnect` chains, and session restore
+
+**`src/context/AppContext.tsx` additions:**
+- Interface: `setAvatar`, `getAvatar`, `addStory`, `getStoriesForPerson`
+- `setAvatar(personId, file)` — calls `processAvatarImage`, builds avatar event, publishes + ingests locally, persists
+- `addStory(personId, title, content)` — builds story event, publishes + ingests locally, persists
+- `getAvatar` / `getStoriesForPerson` delegate to `relaySync` module functions
+
+**New component: `src/components/PhotosPanel.tsx`**
+- Slide-in panel shown from FamilyTreeView ActionPanel → "Photos & media"
+- Displays current avatar at 120px; upload button triggers file picker
+- `AvatarDisplay` component exported for reuse — renders photo if available, falls back to initials circle; supports `ringOnly` prop for compact use
+
+**New component: `src/components/StoriesPanel.tsx`**
+- Slide-in panel shown from FamilyTreeView ActionPanel → "Stories"
+- Lists all stories newest-first; `StoryCard` with expand/collapse for long stories
+- `StoryComposer` — title + textarea; saves via `addStory`; shows error on failure
+
+**UI updates:**
+- `FamilyTreeView.tsx` ActionPanel: "Photos & media" and "Stories" buttons now navigate to their respective sub-panels (no longer marked "coming soon"); panel routing via `subPanel` state (`'main' | 'photos' | 'stories'`); avatar shown at 48px in panel header using `AvatarDisplay`; `hasAvatar` field on `NodeData` drives a gold circle + 📷 indicator on tree nodes with photos
+- `TreeView.tsx` `PersonAvatar`: shows photo if available (40px circle with gold border), falls back to initials
+- `ProfileCard.tsx`: avatar shown at 80px using `AvatarDisplay`; `useApp().getAvatar` called to retrieve
+
+**i18n keys added** (`en.json` + `fr.json`):
+- `media.photos.*` — title, addPhoto, noPhotos, uploadHint, uploading, uploadError, changePhoto, avatarAlt
+- `media.stories.*` — title, addStory, noStories, titleLabel, titlePlaceholder, contentLabel, contentPlaceholder, save, cancel, saving, by
+
+**New test file: `src/lib/media.test.ts` — 21 tests**
+- `estimateBase64Size`: empty URL, known string, padding
+- `buildAvatarEvent`/`parseAvatarEvent`: round-trip JPEG and PNG; null for missing type tag; null for wrong kind; null for empty content; all fields extracted correctly
+- `buildStoryEvent`/`parseStoryEvent`: round-trip; all fields; null for wrong kind; null for empty content; empty title
+- Ingest: avatar retrievable after ingest; newer replaces older; older does not replace newer; stories filtered by person; stories newest-first; `_resetMediaStore` clears all
+
+### Architecture notes
+
+- Avatar images travel inside Nostr events as base64 data URLs — no Blossom HTTP server required for phase 1
+- 200 KB cap chosen to keep events manageable on the relay; typical phone photo resized to 512px JPEG lands around 40–80 KB
+- The `processAvatarImage` function runs in the browser (Canvas API) — it is not available in Node test environment; tests bypass it and construct `buildAvatarEvent` directly
+- `_avatarStore` keeps only the newest avatar per person (most recent `created_at` wins); this means a user can update their photo and connected instances will eventually receive the new event and upgrade their cache
+- Stories accumulate; there is no delete mechanism in phase 1
+
+### Gotcha #59 — processAvatarImage is browser-only
+
+`processAvatarImage` uses `createImageBitmap` and `HTMLCanvasElement` — these are not available in Node/Vitest. Tests should call `buildAvatarEvent` directly with a pre-constructed data URL rather than going through `processAvatarImage`. The function is only called from `AppContext.setAvatar` which runs in the browser.
+
+### Gotcha #60 — Avatar and story events deduplicate via raw event store
+
+`ingestEvent` deduplicates all non-handshake events by `event.id` via `store.getRawEvent`. If the same avatar event is pushed twice (e.g. after "Re-sync all my data"), the second call returns false and `ingestAvatarEvent` is never called again for that event ID. This is correct. A new avatar is a new event with a new ID.
+
+### Version: v1.0.93 | Tests: 678/678 | TypeScript: clean | Build: clean

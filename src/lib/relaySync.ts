@@ -12,7 +12,7 @@
  */
 
 import { EventKind } from '../types/chronicle'
-import type { ChronicleEvent, FactClaim, Endorsement, Person, FactField, RelationshipType, SensitiveRelationshipSubtype } from '../types/chronicle'
+import type { ChronicleEvent, FactClaim, Endorsement, Person, FactField, RelationshipType, SensitiveRelationshipSubtype, PersonAvatar, PersonStory } from '../types/chronicle'
 import type { RelayClient } from './relay'
 import { store } from './storage'
 import {
@@ -26,6 +26,7 @@ import { schemaVersionChecker } from './schemaVersion'
 import { parseJoinRequest, parseJoinAccept } from './joinRequest'
 import type { JoinRequest, JoinAccept } from './joinRequest'
 import { scoreMatch } from './treeLinking'
+import { parseAvatarEvent, parseStoryEvent } from './eventBuilder'
 
 // ── Join request callbacks ────────────────────────────────────────────────────
 // AppContext registers these so the UI can react to incoming handshake events
@@ -208,6 +209,12 @@ export function ingestEvent(event: ChronicleEvent): boolean {
         if (accept && onJoinAcceptReceived) onJoinAcceptReceived(accept)
         break
       }
+      case EventKind.BLOSSOM_REF:
+        ingestAvatarEvent(event)
+        break
+      case EventKind.STORY:
+        ingestStoryEvent(event)
+        break
       default:
         break
     }
@@ -577,4 +584,60 @@ export function replayPendingJoinRequests(): void {
       if (req) onJoinRequestReceived(req)
     }
   }
+}
+
+// ── Media event ingesters ─────────────────────────────────────────────────────
+
+// In-memory maps — keyed by personId; avatars keep only the newest by createdAt
+const _avatarStore = new Map<string, PersonAvatar>()
+const _storyStore = new Map<string, PersonStory>()  // keyed by eventId
+
+export function getAvatar(personId: string): PersonAvatar | undefined {
+  return _avatarStore.get(personId)
+}
+
+export function getStoriesForPerson(personId: string): PersonStory[] {
+  const result: PersonStory[] = []
+  for (const story of _storyStore.values()) {
+    if (story.personId === personId) result.push(story)
+  }
+  return result.sort((a, b) => b.createdAt - a.createdAt)
+}
+
+function ingestAvatarEvent(event: ChronicleEvent): void {
+  const avatar = parseAvatarEvent(event)
+  if (!avatar) return
+  // Resolve alias so the avatar key is always the local canonical ID
+  const localId = store.resolvePersonId(avatar.personId) ?? avatar.personId
+  const existing = _avatarStore.get(localId)
+  if (!existing || avatar.createdAt > existing.createdAt) {
+    _avatarStore.set(localId, { ...avatar, personId: localId })
+    console.log(`[relaySync] avatar ingested for ${localId.slice(0, 8)}…`)
+  }
+}
+
+function ingestStoryEvent(event: ChronicleEvent): void {
+  const story = parseStoryEvent(event)
+  if (!story) return
+  // Resolve alias so stories are indexed under the local canonical ID
+  const localId = store.resolvePersonId(story.personId) ?? story.personId
+  _storyStore.set(story.eventId, { ...story, personId: localId })
+  console.log(`[relaySync] story ingested "${story.title}" for ${localId.slice(0, 8)}…`)
+}
+
+/** Replay already-stored raw events to populate the media caches after session restore. */
+export function replayStoredMediaEvents(): void {
+  _avatarStore.clear()
+  _storyStore.clear()
+  const all = store.getAllRawEvents()
+  for (const event of all) {
+    if (event.kind === EventKind.BLOSSOM_REF) ingestAvatarEvent(event)
+    else if (event.kind === EventKind.STORY) ingestStoryEvent(event)
+  }
+}
+
+/** Reset — for testing only */
+export function _resetMediaStore(): void {
+  _avatarStore.clear()
+  _storyStore.clear()
 }

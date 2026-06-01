@@ -374,5 +374,30 @@
     "openSourceBody": "Chronicle is open source software, released under the MIT licence. You are free to inspect the code, run your own relay, and modify it as you see fit.",
     "licence": "MIT Licence",
     "schemaVersion": "Schema version"
+  },
+  "media": {
+    "photos": {
+      "title": "Photos & Media",
+      "addPhoto": "Add photo",
+      "noPhotos": "No photos yet",
+      "uploadHint": "Upload a profile photo (JPG or PNG, max 200 KB)",
+      "uploading": "Uploading…",
+      "uploadError": "Upload failed",
+      "changePhoto": "Change photo",
+      "avatarAlt": "Profile photo of {{name}}"
+    },
+    "stories": {
+      "title": "Stories",
+      "addStory": "Add story",
+      "noStories": "No stories yet",
+      "titleLabel": "Title",
+      "titlePlaceholder": "e.g. \"Meeting at the farm, 1962\"",
+      "contentLabel": "Story",
+      "contentPlaceholder": "Write a memory or story…",
+      "save": "Save story",
+      "cancel": "Cancel",
+      "saving": "Saving…",
+      "by": "by {{name}}"
+    }
   }
 }
