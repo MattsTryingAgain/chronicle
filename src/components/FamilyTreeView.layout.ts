@@ -169,6 +169,9 @@ function computeLayout(
     if (!byGen.has(g)) byGen.set(g, [])
     byGen.get(g)!.push(n)
   }
+  // Sort each generation's members by ID so layout is deterministic regardless
+  // of which order traverseGraph visited nodes (which varies across instances).
+  for (const members of byGen.values()) members.sort()
   const gens = Array.from(byGen.keys()).sort((a, b) => a - b)
   const minGen = gens[0] ?? 0
   const pos = new Map<string, { x: number; y: number }>()

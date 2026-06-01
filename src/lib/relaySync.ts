@@ -50,9 +50,12 @@ export const AUTO_DEDUP_THRESHOLD = 0.35
 let onJoinRequestReceived: JoinRequestHandler | null = null
 let onJoinAcceptReceived:  JoinAcceptHandler  | null = null
 
-// setContactPubkeysProvider kept for API compatibility — no longer used
-// (subscription now fetches all kinds without an authors filter)
-export function setContactPubkeysProvider(_fn: () => string[]): void {}
+// Contact pubkeys provider — used by ingestIdentityAnchor to auto-register
+// aliases when a known contact's identity anchor arrives on this relay.
+let _getContactNpubs: (() => string[]) | null = null
+export function setContactPubkeysProvider(fn: () => string[]): void {
+  _getContactNpubs = fn
+}
 
 export function setJoinRequestHandler(fn: JoinRequestHandler): void {
   onJoinRequestReceived = fn
@@ -241,15 +244,21 @@ function ingestIdentityAnchor(event: ChronicleEvent): void {
 
   const claimedByNpub = getTag(event, 'claimed_by') ?? event.pubkey
 
-  // Check if we already have this person locally
+  // Check if we already have this person locally (exact ID match)
   const existing = store.getPerson(personId)
-  if (existing) return
+  if (existing) {
+    // Already have them — but if this is a self-published anchor (living user)
+    // make sure their record is marked isLiving: true
+    if (claimedByNpub === personId && !existing.isLiving) {
+      store.upsertPerson({ ...existing, isLiving: true })
+    }
+    return
+  }
 
   // Check if a local alias resolves to this personId — i.e. we have a
   // different local ID for the same remote person. If so, register the alias.
   const resolvedId = store.resolvePersonId(personId)
   if (resolvedId && resolvedId !== personId) {
-    // We have a local record; just register the alias so claims can cross-reference
     store.addPersonAlias({
       localId: resolvedId,
       remoteId: personId,
@@ -259,12 +268,58 @@ function ingestIdentityAnchor(event: ChronicleEvent): void {
     return
   }
 
-  // If claimed_by == person_id, the person is claiming themselves — a living user.
-  // This ensures connected contacts have isLiving: true in the local store.
+  // Auto-alias: if this is a self-published anchor (claimedBy === personId,
+  // i.e. a living user claiming themselves) AND this npub is in our contacts
+  // list, scan existing persons to find the UUID-based stub that was created
+  // for this contact before their anchor arrived, and register the alias.
   const isLivingUser = claimedByNpub === personId
+  if (isLivingUser && _getContactNpubs) {
+    const contactNpubs = _getContactNpubs()
+    if (contactNpubs.includes(personId)) {
+      // Find an existing person whose display name matches the contact's name
+      // or who has no alias yet and was created around the right time.
+      // Strategy: look for any person whose facts include a name claim matching
+      // the name fact claim subject = this npub in the raw event store.
+      // Simpler: find persons whose claims have this npub as claimant, or
+      // whose name matches a name claim for personId.
+      // Most reliable: find the person with the highest-confidence name claim
+      // whose value matches the best name claim for personId in the raw events.
+      const rawEvents = store.getAllRawEvents()
+      const nameForPersonId = rawEvents
+        .filter(e => e.kind === 30081 &&
+          e.tags.some(t => t[0] === 'subject' && t[1] === personId) &&
+          e.tags.some(t => t[0] === 'field' && t[1] === 'name'))
+        .sort((a, b) => b.created_at - a.created_at)[0]
+        ?.tags.find(t => t[0] === 'value')?.[1]
+
+      if (nameForPersonId) {
+        // Find an existing person with this display name and no alias for personId yet
+        for (const candidate of store.getAllPersons()) {
+          if (candidate.id === personId) continue
+          if (store.resolvePersonId(personId) !== null) break // alias already registered
+          if (candidate.displayName === nameForPersonId ||
+              store.getClaimsForPerson(candidate.id)
+                .some(c => c.field === 'name' && c.value === nameForPersonId && !c.retracted)) {
+            store.addPersonAlias({
+              localId: candidate.id,
+              remoteId: personId,
+              creatorNpub: claimedByNpub,
+              createdAt: event.created_at,
+            })
+            // Update the local stub to mark them as living
+            store.upsertPerson({ ...candidate, isLiving: true })
+            console.log(`[ingestIdentityAnchor] auto-aliased contact ${personId.slice(0,12)} → ${candidate.id.slice(0,12)} via name "${nameForPersonId}"`)
+            return
+          }
+        }
+      }
+    }
+  }
+
+  // No existing record — create a new person stub
   const person: Person = {
     id: personId,
-    displayName: 'Unknown', // placeholder until name fact claim arrives
+    displayName: 'Unknown',
     isLiving: isLivingUser,
     createdAt: event.created_at,
   }

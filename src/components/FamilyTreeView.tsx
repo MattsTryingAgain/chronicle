@@ -176,12 +176,16 @@ function ActionPanel({ personId, rootPubkey, onClose, onMakeRoot, onTreeRefresh,
                   ● Connected family member
                 </div>
               )}
-              {isContact && (
-                <div style={{ fontSize: 10, color: 'var(--ink-muted)', marginTop: 4, fontFamily: 'monospace', wordBreak: 'break-all', cursor: 'pointer', userSelect: 'all' }}
-                  title="Click to select and copy">
-                  {personId}
-                </div>
-              )}
+              {isContact && (() => {
+                // Display the contact's actual npub — not a UUID alias
+                const contactNpub = contacts.find(c => personAliasIds.has(c.npub))?.npub ?? personId
+                return (
+                  <div style={{ fontSize: 10, color: 'var(--ink-muted)', marginTop: 4, fontFamily: 'monospace', wordBreak: 'break-all', cursor: 'pointer', userSelect: 'all' }}
+                    title="Click to select and copy">
+                    {contactNpub}
+                  </div>
+                )
+              })()}
             </div>
           </div>
         </div>
