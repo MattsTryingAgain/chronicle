@@ -494,3 +494,36 @@ describe('reconcilePersonAliases', () => {
     expect(getAvatar(localUuid)!.dataUrl).toBe(SAMPLE_DATA_URL)
   })
 })
+
+// ─── End-to-end avatar scenario (instance 2 own tree) ────────────────────────
+
+describe('instance 2 own tree avatar scenario', () => {
+  const MARIA_NPUB2 = 'npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq0pje6j'
+  const MARIA_UUID2 = '550e8400-0000-test-0000-000000000001'
+  const MATT_NPUB2  = 'npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5y8qy0'
+
+  beforeEach(() => {
+    _resetMediaStore()
+    store.clearAll()
+  })
+
+  it('getAvatar(MARIA_UUID) finds avatar stored under MARIA_NPUB after reconcile', () => {
+    const kp = makeKeypair()
+    store.upsertPerson({ id: MARIA_NPUB2, displayName: 'Maria', isLiving: true, createdAt: 1000 })
+    store.upsertPerson({ id: MARIA_UUID2, displayName: 'Maria', isLiving: false, createdAt: 900 })
+
+    const avatarEvent = buildAvatarEvent(kp.npub, kp.nsec, MARIA_NPUB2, SAMPLE_DATA_URL, 'image/jpeg', 100)
+    store.addRawEvent(avatarEvent)
+    ingestAvatarEvent(avatarEvent)
+
+    const nameClaim = buildFactClaim({ claimantNpub: kp.npub, claimantNsec: kp.nsec,
+      subjectId: MARIA_UUID2, field: 'name', value: 'Maria' })
+    store.addRawEvent(nameClaim)
+
+    reconcilePersonAliases()
+
+    expect(getAvatar(MARIA_UUID2)).toBeDefined()
+    expect(getAvatar(MARIA_UUID2)!.dataUrl).toBe(SAMPLE_DATA_URL)
+    expect(getAvatar(MARIA_NPUB2)).toBeDefined()
+  })
+})

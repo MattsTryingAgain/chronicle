@@ -319,9 +319,16 @@ export function resolveAliasIds(personId: string, visited = new Set<string>()): 
   if (canonical && canonical !== personId && !visited.has(canonical)) {
     resolveAliasIds(canonical, visited)
   }
-  for (const alias of store.getAliasesFor(canonical ?? personId)) {
+  const root = (canonical && canonical !== personId) ? canonical : personId
+  for (const alias of store.getAliasesFor(root)) {
     if (!visited.has(alias.remoteId)) {
       resolveAliasIds(alias.remoteId, visited)
+    }
+  }
+  // Also check reverse: personId may be a remoteId in someone else's alias list
+  for (const a of store.getAllAliases()) {
+    if (a.remoteId === personId && !visited.has(a.localId)) {
+      resolveAliasIds(a.localId, visited)
     }
   }
   return visited

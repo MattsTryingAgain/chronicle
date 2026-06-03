@@ -2245,3 +2245,45 @@ The existing `graphRoot === session.npub` early-return guard in the useEffect (a
 - `src/App.tsx` — graph tab click: `setGraphRoot(session.npub)` unconditionally; useEffect else branch: same
 
 ### Version: v1.1.2 | Tests: 686/686 | TypeScript: clean | Build: clean
+
+---
+
+## v1.1.3 — Fix avatar not showing: reconcilePersonAliases wrong skip condition; reverse alias lookup
+
+### What was actually wrong
+
+`reconcilePersonAliases` contained this guard:
+```js
+if (store.getPerson(subjectId)) continue  // skip if known local person
+```
+The intent was to avoid self-aliasing — don't alias a person to themselves. But `subjectId` is the UUID from instance 1's fact claim (e.g. `maria.uuid`). Instance 2 also has this UUID in its store as a person stub (synced from instance 1's relationship events). So `store.getPerson(maria.uuid)` returned the stub → condition true → `continue` → alias was **never registered**. The entire reconciliation was a no-op for the exact case it was meant to fix.
+
+Additionally, `allIdsForPerson` and `resolveAliasIds` only did a "forward" alias lookup: given personId, find its canonical and its registered remotes. They did not do a "reverse" lookup: given personId, check whether it appears as a `remoteId` in any other person's alias list. This meant `getAvatar(maria.uuid)` couldn't find the avatar stored under `maria.npub` even after the alias was registered, because `maria.uuid` appears as a `remoteId` (not a `localId`) in the alias table.
+
+### Fixes
+
+**`reconcilePersonAliases`:** removed the `getPerson(subjectId)` guard. The new logic:
+- Finds candidates with the same name, filtering out the `subjectId` itself
+- Checks for exact-same, already-aliased, and reverse-already-aliased cases  
+- Selects canonical ID: npub wins over UUID (stable identity); otherwise earlier `createdAt` wins
+- Registers `{ localId: canonical, remoteId: other }`
+
+**`allIdsForPerson` (relaySync.ts):** added reverse scan — iterates `store.getAllAliases()` and adds `a.localId` (and its siblings) whenever `a.remoteId === personId`.
+
+**`resolveAliasIds` (graph.ts):** same reverse scan — checks all aliases for any entry where `a.remoteId === personId` and recurses into `a.localId`.
+
+### Tests confirming the fix
+`src/lib/media.test.ts` — `instance 2 own tree avatar scenario`:
+- `getAvatar(MARIA_UUID)` finds avatar stored under `MARIA_NPUB` after `reconcilePersonAliases`
+
+### What this achieves
+- Instance 2's tree view (root = `maria.npub`) traverses `MARIA_UUID` edges correctly
+- Clicking `maria.uuid` node finds the avatar stored under `maria.npub`
+- Profile picture shows on instance 2's own tree without needing to switch perspective
+
+### Files changed
+- `src/lib/relaySync.ts` — `reconcilePersonAliases` fixed; `allIdsForPerson` reverse scan added
+- `src/lib/graph.ts` — `resolveAliasIds` reverse scan added
+- `src/lib/media.test.ts` — 1 new end-to-end scenario test
+
+### Version: v1.1.3 | Tests: 687/687 | TypeScript: clean | Build: clean

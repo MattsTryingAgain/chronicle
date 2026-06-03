@@ -667,13 +667,30 @@ const _storyStore = new Map<string, PersonStory>()  // keyed by eventId
  */
 function allIdsForPerson(personId: string): Set<string> {
   const ids = new Set<string>([personId])
-  // If personId is a remote alias, add the canonical local ID
+  // resolvePersonId returns personId itself if it's a direct person record.
+  // We also need to check if personId appears as a remoteId in any alias entry.
   const canonical = store.resolvePersonId(personId)
-  if (canonical && canonical !== personId) ids.add(canonical)
-  // Add all remote IDs registered under the canonical (or personId itself)
-  const root = canonical ?? personId
+  if (canonical && canonical !== personId) {
+    // personId is a pure remote alias — canonical is a different local ID
+    ids.add(canonical)
+  }
+  // Find the true root: either the canonical (if different) or personId
+  const root = (canonical && canonical !== personId) ? canonical : personId
+  // All remote IDs registered under this local root
   for (const alias of store.getAliasesFor(root)) {
     ids.add(alias.remoteId)
+  }
+  // Also check if personId appears as a remoteId in someone else's alias list
+  // (handles the case where MARIA_UUID is a local person but ALSO registered
+  // as a remoteId under MARIA_NPUB — meaning MARIA_NPUB is the canonical)
+  for (const a of store.getAllAliases()) {
+    if (a.remoteId === personId) {
+      // a.localId is the canonical; add it and all its other aliases
+      ids.add(a.localId)
+      for (const sibling of store.getAliasesFor(a.localId)) {
+        ids.add(sibling.remoteId)
+      }
+    }
   }
   return ids
 }
@@ -767,29 +784,51 @@ export function reconcilePersonAliases(): void {
 
   let registered = 0
   for (const [subjectId, name] of nameBySubject) {
-    // Skip if subjectId is already a known local person ID
-    if (store.getPerson(subjectId)) continue
-    // Skip if already aliased
-    if (store.resolvePersonId(subjectId) !== null) continue
-
-    // Find candidates — persons with this name that are NOT already this subjectId
+    // Find candidates with this name that are NOT the subjectId itself
     const candidates = (personsByName.get(name) ?? []).filter(id => id !== subjectId)
     // Only alias if exactly one candidate (avoid false positives with common names)
     if (candidates.length !== 1) continue
 
     const localId = candidates[0]
-    // Double-check not already aliased
-    const alreadyAliased = store.getAliasesFor(localId).some(a => a.remoteId === subjectId)
-    if (alreadyAliased) continue
+
+    // Skip if these two IDs are already the same local record
+    if (localId === subjectId) continue
+    // Skip if subjectId already resolves to localId (already aliased)
+    if (store.resolvePersonId(subjectId) === localId) continue
+    // Skip if localId already resolves to subjectId (reverse already registered)
+    if (store.resolvePersonId(localId) === subjectId) continue
+    // Skip duplicate alias
+    if (store.getAliasesFor(localId).some(a => a.remoteId === subjectId)) continue
+
+    // Register: subjectId is an alternate ID for the person known locally as localId.
+    // Use the person with the earlier createdAt as the canonical local, or default
+    // to whichever getPerson finds first.
+    const subjectPerson = store.getPerson(subjectId)
+    const localPerson = store.getPerson(localId)
+    // Canonical = the one created first (likely the one the user added directly)
+    // or the npub if one of them is an npub (living user's stable identity)
+    const subjectIsNpub = subjectId.startsWith('npub')
+    const localIsNpub = localId.startsWith('npub')
+    let canonicalId = localId
+    let remoteId = subjectId
+    if (subjectIsNpub && !localIsNpub) {
+      // npub should be canonical — swap
+      canonicalId = subjectId
+      remoteId = localId
+    } else if (subjectPerson && localPerson && subjectPerson.createdAt < localPerson.createdAt && !localIsNpub) {
+      // Earlier person is canonical (unless local is already an npub)
+      canonicalId = subjectId
+      remoteId = localId
+    }
 
     store.addPersonAlias({
-      localId,
-      remoteId: subjectId,
+      localId: canonicalId,
+      remoteId,
       creatorNpub: 'reconcile',
       createdAt: Math.floor(Date.now() / 1000),
     })
     registered++
-    console.log(`[reconcilePersonAliases] aliased ${subjectId.slice(0,12)} → ${localId.slice(0,12)} via name "${name}"`)
+    console.log(`[reconcilePersonAliases] aliased ${remoteId.slice(0,12)} → ${canonicalId.slice(0,12)} via name "${name}"`)
   }
 
   if (registered > 0) console.log(`[reconcilePersonAliases] registered ${registered} new aliases`)
