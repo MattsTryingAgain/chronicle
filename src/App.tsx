@@ -173,11 +173,11 @@ function MainShell() {
         setGraphRoot(rels[0].subjectId)
       }
     } else {
-      // Auto-set root on first sync that delivers relationships
-      const hasOwnRels = rels.some(r =>
-        r.subjectId === session.npub || r.relatedId === session.npub
-      )
-      setGraphRoot(hasOwnRels ? session.npub : rels[0].subjectId)
+      // Auto-set root on first sync — always use session.npub.
+      // traverseGraph is alias-aware so it finds relationships even if stored
+      // under a different ID. Never fall back to rels[0].subjectId here as
+      // that would set an arbitrary person as root and show "Return to my tree".
+      setGraphRoot(session.npub)
     }
   }, [syncVersion])  // eslint-disable-line react-hooks/exhaustive-deps
   const [showVersionBanner, setShowVersionBanner] = useState(false)
@@ -211,18 +211,10 @@ function MainShell() {
             onClick={() => {
                 setTab('graph')
                 if (!graphRoot && session?.npub) {
-                  // Use session npub as root if they have relationships,
-                  // otherwise find the first person in the graph who does.
-                  const rels = getAllRelationships()
-                  const hasRels = rels.some(r =>
-                    r.subjectId === session.npub || r.relatedId === session.npub
-                  )
-                  if (hasRels) {
-                    setGraphRoot(session.npub)
-                  } else {
-                    const firstConnected = rels[0]?.subjectId ?? session.npub
-                    setGraphRoot(firstConnected)
-                  }
+                  // Always start from the session user's own npub — traverseGraph
+                  // is alias-aware and will find their relationships even if stored
+                  // under a different ID (e.g. a UUID from another instance).
+                  setGraphRoot(session.npub)
                 }
               }}
           >

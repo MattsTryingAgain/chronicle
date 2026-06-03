@@ -2218,3 +2218,30 @@ Fix: `resolveAliasIds` in `graph.ts` now also consults the store alias table (`s
 The store alias table (populated by `reconcilePersonAliases` / `tryAutoAliasContact`) and the graph same-person link store (kind 30083 events) are independent. `resolveAliasIds` must check both or cross-instance traversal will miss edges stored under alias IDs. The store alias table is the more commonly populated source since most installations won't have explicit kind-30083 events.
 
 ### Version: v1.1.1 | Tests: 686/686 | TypeScript: clean | Build: clean
+
+---
+
+## v1.1.2 — Fix actual root cause of wrong graphRoot on instance 2
+
+### What v1.1.1 got wrong
+
+v1.1.1 added a guard to the `syncVersion` useEffect preventing auto-redirect when `graphRoot === session.npub`. That was correct but missed the primary bug location: the **graph tab click handler** in `App.tsx`.
+
+When clicking the Family Tree tab for the first time (`!graphRoot`), the handler checked whether `session.npub` appeared literally in any relationship's `subjectId` or `relatedId`. On instance 2, Maria's relationships synced from instance 1 use `maria.uuid`, not `maria.npub`. The raw string check found no match → fell through to `setGraphRoot(rels[0]?.subjectId)` → set root to some ancestor's UUID → `rootPubkey !== session.npub` → "Return to my tree" appeared incorrectly.
+
+The `syncVersion` useEffect had the same raw-string problem in its `else` branch (when `graphRoot` is null) — also fixed.
+
+### Fix
+
+Both locations now unconditionally set `graphRoot = session.npub` as the starting root:
+
+**Tab click handler:** `setGraphRoot(session.npub)` — no relationship check needed. `traverseGraph` is alias-aware and will find all edges connected to the session user, regardless of which ID format those edges use.
+
+**useEffect else branch:** same — always `setGraphRoot(session.npub)` when `graphRoot` is null and relationships exist.
+
+The existing `graphRoot === session.npub` early-return guard in the useEffect (added in v1.1.1) is retained — it prevents subsequent sync events from redirecting away once the root is correctly set to the session user.
+
+### Files changed
+- `src/App.tsx` — graph tab click: `setGraphRoot(session.npub)` unconditionally; useEffect else branch: same
+
+### Version: v1.1.2 | Tests: 686/686 | TypeScript: clean | Build: clean
