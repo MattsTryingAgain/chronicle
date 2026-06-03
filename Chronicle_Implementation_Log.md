@@ -2139,3 +2139,54 @@ Fix: added `setSyncVersion(v => v + 1)` to all three `fetchOnConnect` completion
 - `src/context/AppContext.tsx` — all three `fetchOnConnect` chains now call `setSyncVersion(v => v + 1)` after `replayStoredMediaEvents`
 
 ### Version: v1.0.99 | Tests: 681/681 | TypeScript: clean | Build: clean
+
+---
+
+## v1.1.0 — Cross-instance person alias reconciliation; avatar shows on own tree
+
+### Root cause
+
+Instance 2 (Maria) uploaded her avatar. The avatar event has `person_id = maria.npub`. On instance 2's own tree, Maria's node has `id = maria.npub`. `getAvatar(maria.npub)` finds the avatar via `_avatarStore`. ✓
+
+But instance 1 also has a UUID-based person record for Maria (`maria.uuid`) created before her identity anchor arrived. After `tryAutoAliasContact` runs on instance 1, the alias `{ localId: maria.uuid, remoteId: maria.npub }` is registered. `getAvatar(maria.uuid)` finds the avatar via `allIdsForPerson`. ✓
+
+The missing piece: **instance 2 does not have the reverse alias** `{ localId: maria.npub, remoteId: maria.uuid }`. When instance 1's relationships sync to instance 2, they contain edges using `maria.uuid`. `traverseGraph(maria.npub)` on instance 2 finds both `maria.npub` (from her own relationships) and `maria.uuid` (from instance 1's relationships) as separate unlinked nodes. Clicking the `maria.uuid` node: `getAvatar(maria.uuid)` → `allIdsForPerson(maria.uuid)` → no alias registered on instance 2 → returns empty set → no avatar found → initials shown.
+
+### Fix — `reconcilePersonAliases()`
+
+New exported function in `src/lib/relaySync.ts`. Algorithm:
+
+1. Scan all stored raw FACT_CLAIM events, build `subjectId → name` map.
+2. For each `subjectId` that is NOT already a known local person and NOT already aliased, find local persons with the same display name.
+3. If exactly one candidate matches (unique name), register `{ localId: candidate.id, remoteId: subjectId }`.
+4. Ambiguous names (two or more candidates) are skipped to avoid false positives.
+
+Wired into all `fetchOnConnect` completion chains and the `setSyncUpdateHandler` batch handler, always running after `replayStoredFactClaims` (which populates display names) and before `replayStoredMediaEvents` (which uses the alias table to key the media stores).
+
+After this fix: on instance 2, when a fact claim for `maria.uuid` with `name = "Maria"` arrives and is stored, `reconcilePersonAliases` finds it, matches it to `{ id: maria.npub, displayName: "Maria" }`, and registers `{ localId: maria.npub, remoteId: maria.uuid }`. `getAvatar(maria.uuid)` → `allIdsForPerson(maria.uuid)` → canonical = `maria.npub` → checks `_avatarStore.get(maria.npub)` → avatar found. ✓
+
+### Safety properties
+
+- **No false positives for unique names**: if two persons share the same name, no alias is registered. The user can still use the manual same-person link if needed.
+- **Idempotent**: calling twice doesn't create duplicate aliases (checks `getAliasesFor` before registering).
+- **Non-destructive**: only adds aliases, never modifies existing person records or claims.
+- **Common names are safe**: "Maria Smith" with two local records of that name → no alias registered → user must confirm manually. Only "unique in local store" names are auto-aliased.
+
+### New tests (5)
+`src/lib/media.test.ts` — `reconcilePersonAliases`:
+- Registers alias when remote subject has same name as local person (unique match)
+- Does not register alias when multiple persons share the name (ambiguous)
+- Does not self-alias a known local person
+- Idempotent (calling twice produces one alias)
+- After alias, `getAvatar` finds avatar filed under remote UUID when queried via local UUID
+
+### Files changed
+- `src/lib/relaySync.ts` — `reconcilePersonAliases` exported
+- `src/context/AppContext.tsx` — `reconcilePersonAliases` imported and called in all `fetchOnConnect` chains and `setSyncUpdateHandler`
+- `src/lib/media.test.ts` — 5 new tests; `reconcilePersonAliases` and `buildFactClaim` added to imports
+
+### Gotcha #67 — reconcilePersonAliases requires unique display names for auto-aliasing
+
+Auto-aliasing by name only fires when exactly one local person has that name. If two people in the tree share a display name (e.g. two people named "Maria"), no alias is registered for either — the user must confirm the link manually via the same-person UI. This is intentional: a false alias is worse than a missing one.
+
+### Version: v1.1.0 | Tests: 686/686 | TypeScript: clean | Build: clean

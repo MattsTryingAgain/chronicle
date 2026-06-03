@@ -716,6 +716,85 @@ export function ingestStoryEvent(event: ChronicleEvent): void {
   console.log(`[relaySync] story ingested "${story.title}" for ${localId.slice(0, 8)}…`)
 }
 
+/**
+ * Scan all stored raw fact claim events and register aliases between person
+ * records that share the same name but have different IDs.
+ *
+ * This handles the cross-instance case where:
+ *   - Instance 1 has person { id: uuid-X, displayName: "Maria" }
+ *   - Instance 2 has person { id: maria.npub, displayName: "Maria" }
+ *   - No same-person link event exists yet
+ *
+ * By matching names, we can infer the alias and register it, so getAvatar
+ * and getStoriesForPerson work correctly on both instances without requiring
+ * a manual "same person" confirmation.
+ *
+ * Only registers aliases when there is exactly one candidate match (to avoid
+ * false positives with common names). Idempotent — safe to call multiple times.
+ */
+export function reconcilePersonAliases(): void {
+  const rawEvents = store.getAllRawEvents()
+
+  // Build: subjectId → best name value
+  const nameBySubject = new Map<string, string>()
+  for (const event of rawEvents) {
+    if (event.kind !== EventKind.FACT_CLAIM) continue
+    const field = event.tags?.find((t: string[]) => t[0] === 'field')?.[1]
+    const subject = event.tags?.find((t: string[]) => t[0] === 'subject')?.[1]
+    const value = event.tags?.find((t: string[]) => t[0] === 'value')?.[1]
+    if (field === 'name' && subject && value) {
+      nameBySubject.set(subject, value)
+    }
+  }
+
+  // Build: displayName → person IDs that have that name
+  const personsByName = new Map<string, string[]>()
+  for (const person of store.getAllPersons()) {
+    if (!person.displayName || person.displayName === 'Unknown') continue
+    const list = personsByName.get(person.displayName) ?? []
+    list.push(person.id)
+    personsByName.set(person.displayName, list)
+  }
+  // Also index by name claim (covers stubs whose displayName is still 'Unknown')
+  for (const [subjectId, name] of nameBySubject) {
+    const localId = store.resolvePersonId(subjectId) ?? subjectId
+    const person = store.getPerson(localId)
+    if (person && person.displayName !== 'Unknown' && person.displayName !== name) continue
+    const list = personsByName.get(name) ?? []
+    if (!list.includes(localId)) list.push(localId)
+    personsByName.set(name, list)
+  }
+
+  let registered = 0
+  for (const [subjectId, name] of nameBySubject) {
+    // Skip if subjectId is already a known local person ID
+    if (store.getPerson(subjectId)) continue
+    // Skip if already aliased
+    if (store.resolvePersonId(subjectId) !== null) continue
+
+    // Find candidates — persons with this name that are NOT already this subjectId
+    const candidates = (personsByName.get(name) ?? []).filter(id => id !== subjectId)
+    // Only alias if exactly one candidate (avoid false positives with common names)
+    if (candidates.length !== 1) continue
+
+    const localId = candidates[0]
+    // Double-check not already aliased
+    const alreadyAliased = store.getAliasesFor(localId).some(a => a.remoteId === subjectId)
+    if (alreadyAliased) continue
+
+    store.addPersonAlias({
+      localId,
+      remoteId: subjectId,
+      creatorNpub: 'reconcile',
+      createdAt: Math.floor(Date.now() / 1000),
+    })
+    registered++
+    console.log(`[reconcilePersonAliases] aliased ${subjectId.slice(0,12)} → ${localId.slice(0,12)} via name "${name}"`)
+  }
+
+  if (registered > 0) console.log(`[reconcilePersonAliases] registered ${registered} new aliases`)
+}
+
 /** Replay already-stored raw events to populate the media caches after session restore. */
 export function replayStoredMediaEvents(): void {
   _avatarStore.clear()

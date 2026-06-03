@@ -26,7 +26,7 @@ import { generateUserKeyMaterial, importKeyMaterial, nsecToHex, npubToHex } from
 import { encryptWithPassword, decryptWithPassword } from '../lib/storage'
 import { RelayPool, type RelayStatus } from '../lib/relay'
 import { broadcastQueue } from '../lib/queue'
-import { startSync, fetchOnConnect, ingestAvatarEvent, ingestStoryEvent, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, replayStoredFactClaims, replayStoredIdentityAnchors, setContactPubkeysProvider, setSyncUpdateHandler, getAvatar as rsGetAvatar, getStoriesForPerson as rsGetStoriesForPerson, replayStoredMediaEvents } from '../lib/relaySync'
+import { startSync, fetchOnConnect, ingestAvatarEvent, ingestStoryEvent, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, replayStoredFactClaims, reconcilePersonAliases, replayStoredIdentityAnchors, setContactPubkeysProvider, setSyncUpdateHandler, getAvatar as rsGetAvatar, getStoriesForPerson as rsGetStoriesForPerson, replayStoredMediaEvents } from '../lib/relaySync'
 import { buildJoinRequestEvent, buildJoinAcceptEvent, buildRelationshipClaim, buildFactClaim, buildIdentityAnchor, buildAvatarEvent, buildStoryEvent } from '../lib/eventBuilder'
 import { processAvatarImage } from '../lib/media'
 import { ContactListManager, type Contact } from '../lib/contactList'
@@ -260,7 +260,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const ownEvents = store.getAllRawEvents()
         console.log(`[connectToRelay] connected to ${url}, pushing ${ownEvents.length} own events, fetching remote`)
         // Pull events from this relay authored by known pubkeys (including contacts)
-        fetchOnConnect(client).then(() => { replayStoredFactClaims(); replayStoredMediaEvents(); setSyncVersion(v => v + 1) }).catch((e) => console.error('[connectToRelay] fetchOnConnect error:', e))
+        fetchOnConnect(client).then(() => { replayStoredFactClaims(); reconcilePersonAliases(); replayStoredMediaEvents(); setSyncVersion(v => v + 1) }).catch((e) => console.error('[connectToRelay] fetchOnConnect error:', e))
         startSync(client)
         // Push our own events to this relay so the remote instance can see our tree data
         for (const event of ownEvents) {
@@ -296,7 +296,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       for (const [url] of Object.entries(poolRef.current.getStatuses())) {
         const client = poolRef.current.add(url)
         if (client.getStatus() === 'connected') {
-          fetchOnConnect(client).then(() => { replayStoredFactClaims(); replayStoredMediaEvents(); setSyncVersion(v => v + 1) }).catch(() => {})
+          fetchOnConnect(client).then(() => { replayStoredFactClaims(); reconcilePersonAliases(); replayStoredMediaEvents(); setSyncVersion(v => v + 1) }).catch(() => {})
         }
       }
     }
@@ -489,6 +489,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             // Backfill display names for any person stub whose name fact claim
             // was stored before the stub existed (shows as 'Unknown').
             replayStoredFactClaims()
+            reconcilePersonAliases()
             replayStoredMediaEvents()
             setHasStoredIdentity(true)
             setScreen('onboarding-unlock')
@@ -542,6 +543,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setContactPubkeysProvider(() => contactMgrRef.current.getAll().map(c => c.npub))
     setSyncUpdateHandler(() => {
       replayStoredFactClaims()
+      reconcilePersonAliases()
       replayStoredMediaEvents()
       setSyncVersion(v => v + 1)
       // Persist after every sync batch so raw events and updated display names
@@ -570,7 +572,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setRelayStatuses({ ...pool.getStatuses() })
       if (status === 'connected' && !syncUnsubRef.current) {
         setSyncStatus('syncing')
-        fetchOnConnect(client).then(() => { replayStoredFactClaims(); replayStoredMediaEvents(); setSyncStatus('done'); setSyncVersion(v => v + 1) }).catch(() => setSyncStatus('error'))
+        fetchOnConnect(client).then(() => { replayStoredFactClaims(); reconcilePersonAliases(); replayStoredMediaEvents(); setSyncStatus('done'); setSyncVersion(v => v + 1) }).catch(() => setSyncStatus('error'))
         syncUnsubRef.current = startSync(client)
       }
     })

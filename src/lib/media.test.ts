@@ -15,6 +15,7 @@ import {
   parseAvatarEvent,
   buildStoryEvent,
   parseStoryEvent,
+  buildFactClaim,
 } from '../lib/eventBuilder'
 import { estimateBase64Size } from '../lib/media'
 import {
@@ -23,6 +24,7 @@ import {
   ingestStoryEvent,
   getAvatar,
   getStoriesForPerson,
+  reconcilePersonAliases,
   _resetMediaStore,
 } from '../lib/relaySync'
 import { store } from '../lib/storage'
@@ -358,5 +360,137 @@ describe('alias-aware media lookup', () => {
     const stories = getStoriesForPerson(remoteNpub)
     expect(stories).toHaveLength(1)
     expect(stories[0].title).toBe('Local story')
+  })
+})
+
+// ─── reconcilePersonAliases ───────────────────────────────────────────────────
+
+describe('reconcilePersonAliases', () => {
+  beforeEach(() => {
+    _resetMediaStore()
+    store.clearAll()
+  })
+
+  it('registers alias when a remote subject ID has the same name as a local person', () => {
+    const kp = deriveKeyMaterialFromMnemonic(generateUserMnemonic())
+    const localUuid = '550e8400-0000-0000-0000-000000000020'
+    const remoteUuid = '550e8400-0000-0000-0000-000000000021'
+
+    // Local person with displayName "Maria"
+    store.upsertPerson({ id: localUuid, displayName: 'Maria', isLiving: true, createdAt: 1000 })
+
+    // Raw fact claim from remote instance with subject = remoteUuid, name = "Maria"
+    const event = buildFactClaim({
+      claimantNpub: kp.npub,
+      claimantNsec: kp.nsec,
+      subjectId: remoteUuid,
+      field: 'name',
+      value: 'Maria',
+    })
+    store.addRawEvent(event)
+
+    reconcilePersonAliases()
+
+    // remoteUuid should now resolve to localUuid
+    expect(store.resolvePersonId(remoteUuid)).toBe(localUuid)
+  })
+
+  it('does not register alias when multiple persons share the same name (ambiguous)', () => {
+    const kp = deriveKeyMaterialFromMnemonic(generateUserMnemonic())
+    const localUuid1 = '550e8400-0000-0000-0000-000000000030'
+    const localUuid2 = '550e8400-0000-0000-0000-000000000031'
+    const remoteUuid = '550e8400-0000-0000-0000-000000000032'
+
+    store.upsertPerson({ id: localUuid1, displayName: 'Maria', isLiving: false, createdAt: 1000 })
+    store.upsertPerson({ id: localUuid2, displayName: 'Maria', isLiving: false, createdAt: 1000 })
+
+    const event = buildFactClaim({
+      claimantNpub: kp.npub,
+      claimantNsec: kp.nsec,
+      subjectId: remoteUuid,
+      field: 'name',
+      value: 'Maria',
+    })
+    store.addRawEvent(event)
+
+    reconcilePersonAliases()
+
+    // Should NOT alias — two candidates, ambiguous
+    expect(store.resolvePersonId(remoteUuid)).toBeNull()
+  })
+
+  it('does not register alias when subject ID is already a known local person', () => {
+    const kp = deriveKeyMaterialFromMnemonic(generateUserMnemonic())
+    const localUuid = '550e8400-0000-0000-0000-000000000040'
+
+    store.upsertPerson({ id: localUuid, displayName: 'Maria', isLiving: false, createdAt: 1000 })
+
+    // Fact claim where subject IS the known local person — should not create a self-alias
+    const event = buildFactClaim({
+      claimantNpub: kp.npub,
+      claimantNsec: kp.nsec,
+      subjectId: localUuid,
+      field: 'name',
+      value: 'Maria',
+    })
+    store.addRawEvent(event)
+
+    reconcilePersonAliases()
+
+    // localUuid is already a known person — no alias needed
+    expect(store.getAliasesFor(localUuid)).toHaveLength(0)
+  })
+
+  it('is idempotent — calling twice does not create duplicate aliases', () => {
+    const kp = deriveKeyMaterialFromMnemonic(generateUserMnemonic())
+    const localUuid = '550e8400-0000-0000-0000-000000000050'
+    const remoteUuid = '550e8400-0000-0000-0000-000000000051'
+
+    store.upsertPerson({ id: localUuid, displayName: 'Maria', isLiving: true, createdAt: 1000 })
+
+    const event = buildFactClaim({
+      claimantNpub: kp.npub,
+      claimantNsec: kp.nsec,
+      subjectId: remoteUuid,
+      field: 'name',
+      value: 'Maria',
+    })
+    store.addRawEvent(event)
+
+    reconcilePersonAliases()
+    reconcilePersonAliases()
+
+    expect(store.getAliasesFor(localUuid)).toHaveLength(1)
+  })
+
+  it('after alias, getAvatar finds avatar filed under remote UUID when queried by local UUID', () => {
+    const kp = deriveKeyMaterialFromMnemonic(generateUserMnemonic())
+    const localUuid = '550e8400-0000-0000-0000-000000000060'
+    const remoteUuid = '550e8400-0000-0000-0000-000000000061'
+
+    store.upsertPerson({ id: localUuid, displayName: 'Maria', isLiving: true, createdAt: 1000 })
+
+    // Name claim for remoteUuid = "Maria"
+    const nameClaim = buildFactClaim({
+      claimantNpub: kp.npub,
+      claimantNsec: kp.nsec,
+      subjectId: remoteUuid,
+      field: 'name',
+      value: 'Maria',
+    })
+    store.addRawEvent(nameClaim)
+
+    // Avatar filed under remoteUuid
+    const avatarEvent = buildAvatarEvent(kp.npub, kp.nsec, remoteUuid, SAMPLE_DATA_URL, 'image/jpeg', 512)
+    ingestAvatarEvent(avatarEvent)
+
+    // Before reconcile: not found via localUuid
+    expect(getAvatar(localUuid)).toBeUndefined()
+
+    reconcilePersonAliases()
+
+    // After reconcile: found via localUuid
+    expect(getAvatar(localUuid)).toBeDefined()
+    expect(getAvatar(localUuid)!.dataUrl).toBe(SAMPLE_DATA_URL)
   })
 })
