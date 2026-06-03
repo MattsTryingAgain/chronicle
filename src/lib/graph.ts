@@ -11,6 +11,7 @@
  */
 
 import type { RelationshipType, SensitiveRelationshipSubtype } from '../types/chronicle'
+import { store } from './storage'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -306,10 +307,22 @@ export function traverseGraph(rootId: string, options: TraversalOptions = {}): T
 export function resolveAliasIds(personId: string, visited = new Set<string>()): Set<string> {
   if (visited.has(personId)) return visited
   visited.add(personId)
+  // Graph same-person links (kind 30083 events)
   const links = _backend.getSamePersonLinksFor(personId)
   for (const link of links) {
     const other = link.idA === personId ? link.idB : link.idA
     resolveAliasIds(other, visited)
+  }
+  // Store alias table (populated by reconcilePersonAliases and tryAutoAliasContact)
+  // This covers the common case where reconciliation happened without a kind-30083 event.
+  const canonical = store.resolvePersonId(personId)
+  if (canonical && canonical !== personId && !visited.has(canonical)) {
+    resolveAliasIds(canonical, visited)
+  }
+  for (const alias of store.getAliasesFor(canonical ?? personId)) {
+    if (!visited.has(alias.remoteId)) {
+      resolveAliasIds(alias.remoteId, visited)
+    }
   }
   return visited
 }

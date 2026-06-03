@@ -161,6 +161,11 @@ function MainShell() {
     const rels = getAllRelationships()
     if (rels.length === 0) return
     if (graphRoot) {
+      // Never auto-redirect away from the session user's own npub — even if their
+      // npub doesn't appear literally in relationship IDs (aliases may be in use),
+      // traverseGraph will resolve them. Redirecting away causes the "Return to my
+      // tree" button to show incorrectly and loses the avatar on re-root.
+      if (graphRoot === session.npub) return
       const rootHasRels = rels.some(r =>
         r.subjectId === graphRoot || r.relatedId === graphRoot
       )

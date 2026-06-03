@@ -2190,3 +2190,31 @@ After this fix: on instance 2, when a fact claim for `maria.uuid` with `name = "
 Auto-aliasing by name only fires when exactly one local person has that name. If two people in the tree share a display name (e.g. two people named "Maria"), no alias is registered for either — the user must confirm the link manually via the same-person UI. This is intentional: a false alias is worse than a missing one.
 
 ### Version: v1.1.0 | Tests: 686/686 | TypeScript: clean | Build: clean
+
+---
+
+## v1.1.1 — "Return to my tree" shown incorrectly; avatar lost on re-root; alias-aware traversal
+
+### Bugs fixed
+
+**Bug 1 — "Return to my tree" button showing on own tree**
+
+Root cause: `App.tsx` `useEffect` on `syncVersion` (lines 159–179) checks whether the current `graphRoot` appears in any relationship's `subjectId` or `relatedId`. On instance 2, `graphRoot = maria.npub` but all synced relationships from instance 1 use `maria.uuid`. The raw string check `rels.some(r => r.subjectId === graphRoot)` returns false → `setGraphRoot(rels[0].subjectId)` fires, redirecting the root to some other person's UUID. Now `rootPubkey !== session.npub` → "Return to my tree" button appears incorrectly.
+
+Fix: added a guard — if `graphRoot === session.npub`, never auto-redirect. The session user's own npub is always a valid root; `traverseGraph` resolves aliases and will find their relationships even if stored under a different ID.
+
+**Bug 2 — Avatar disappears / tree layout changes when clicking "Return to my tree"**
+
+Root cause (same): clicking "Return to my tree" called `onMakeRoot(session.npub)`. `traverseGraph(maria.npub)` used `resolveAliasIds(maria.npub)` which only consulted graph same-person links (kind 30083 events). The store alias table (populated by `reconcilePersonAliases`) was not consulted. So `resolveAliasIds(maria.npub)` returned `{ maria.npub }` only — didn't include `maria.uuid`. The traversal found only Maria's locally-published relationships; instance 1's relationships (using `maria.uuid`) were missed. The tree was sparse, the alias chain broke, and `getAvatar(maria.uuid)` couldn't find the avatar from `maria.npub` traversal.
+
+Fix: `resolveAliasIds` in `graph.ts` now also consults the store alias table (`store.resolvePersonId` + `store.getAliasesFor`) in addition to graph same-person links. This makes the traversal alias-aware for both link sources, so `traverseGraph(maria.npub)` correctly discovers `maria.uuid` edges and all connected nodes.
+
+### Files changed
+- `src/App.tsx` — `graphRoot === session.npub` early-return guard in sync useEffect
+- `src/lib/graph.ts` — `resolveAliasIds` extended to consult store alias table; `import { store }` added
+
+### Gotcha #68 — resolveAliasIds must consult both alias sources
+
+The store alias table (populated by `reconcilePersonAliases` / `tryAutoAliasContact`) and the graph same-person link store (kind 30083 events) are independent. `resolveAliasIds` must check both or cross-instance traversal will miss edges stored under alias IDs. The store alias table is the more commonly populated source since most installations won't have explicit kind-30083 events.
+
+### Version: v1.1.1 | Tests: 686/686 | TypeScript: clean | Build: clean
