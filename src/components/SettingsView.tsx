@@ -67,7 +67,7 @@ function AddContactModal({ onSave, onCancel }: { onSave: (c: RecoveryContact) =>
 
 function RelayStatusSection() {
   const { t } = useTranslation()
-  const { relayStatuses, localRelayUrl } = useApp()
+  const { relayStatuses, localRelayUrl, externalRelayUrl } = useApp()
   const [relayLog, setRelayLog] = useState('')
   const [showLog, setShowLog] = useState(false)
   const isElectron = typeof window !== 'undefined' && (window as any).chronicleElectron
@@ -119,6 +119,37 @@ function RelayStatusSection() {
           ))
         )}
       </div>
+      {isElectron && (
+        <div className="card" style={{ marginTop: 8, padding: 'var(--space-md) var(--space-lg)' }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', marginBottom: 4 }}>
+            External connectivity (UPnP)
+          </div>
+          {externalRelayUrl ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: 'var(--success)', fontSize: 13 }}>●</span>
+                <span style={{ fontSize: 13, color: 'var(--success)', fontWeight: 500 }}>Active</span>
+              </div>
+              <div style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--ink-muted)', marginTop: 4, wordBreak: 'break-all' }}>
+                {externalRelayUrl}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 4 }}>
+                Remote family members can connect to you directly. Invite codes include this address.
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: 'var(--warn)', fontSize: 13 }}>●</span>
+                <span style={{ fontSize: 13, color: 'var(--warn)', fontWeight: 500 }}>Local network only</span>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 4 }}>
+                UPnP port mapping unavailable on this network. You can still sync with family members on the same network, or use a shared relay.
+              </div>
+            </>
+          )}
+        </div>
+      )}
       {isElectron && (
         <div style={{ marginTop: 8 }}>
           <button className="btn btn-outline btn-sm" onClick={loadLog}>

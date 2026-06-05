@@ -48,7 +48,7 @@ function RelayDot() {
 function ConnectTab({ pendingMatchVersion }: { pendingMatchVersion: number }) {
   const { t } = useTranslation()
   const {
-    session, localRelayUrl, contacts, removeContact,
+    session, localRelayUrl, externalRelayUrl, contacts, removeContact,
     joinRequests, acceptJoinRequest, rejectJoinRequest, reportBadActor,
     sendJoinRequest, syncVersion, repairRelationships, repushAllEvents,
   } = useApp()
@@ -120,7 +120,7 @@ function ConnectTab({ pendingMatchVersion }: { pendingMatchVersion: number }) {
         show={showInvite}
         onClose={() => setShowInvite(false)}
         userNpub={session.npub}
-        relayUrl={localRelayUrl}
+        relayUrl={externalRelayUrl ?? localRelayUrl}
         onIncomingInvite={(npub, relay) => {
           sendJoinRequest(npub, relay)
           setShowInvite(false)

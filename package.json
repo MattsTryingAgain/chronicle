@@ -82,6 +82,7 @@
     "electron-updater": "^6.3.9",
     "i18next": "^26.0.2",
     "i18next-browser-languagedetector": "^8.2.1",
+    "nat-upnp": "^1.1.1",
     "nostr-tools": "^2.23.3",
     "react": "^19.2.4",
     "react-bootstrap": "^2.10.10",

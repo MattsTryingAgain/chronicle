@@ -39,6 +39,22 @@ contextBridge.exposeInMainWorld('chronicleElectron', {
   /** Add a hex pubkey to the relay allowlist (writes file + notifies relay) */
   allowlistAdd: (hexPubkey) => ipcRenderer.invoke('allowlist-add', hexPubkey),
 
+  /**
+   * Returns the external relay URL once UPnP mapping is established, or null.
+   * Call this after app startup — may return null if UPnP hasn't completed yet.
+   */
+  getExternalRelayUrl: () => ipcRenderer.invoke('get-external-relay-url'),
+
+  /**
+   * Subscribe to UPnP URL ready event — fires once when external address is known.
+   * Returns an unsubscribe function.
+   */
+  onUpnpUrlReady: (callback) => {
+    const handler = (_event, url) => callback(url)
+    ipcRenderer.on('upnp-url-ready', handler)
+    return () => ipcRenderer.removeListener('upnp-url-ready', handler)
+  },
+
   /** Manually trigger an update check */
   checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
 

@@ -2429,85 +2429,84 @@ git push origin vX.X.X
 
 ---
 
-## WebRTC P2P Sync — v1.1.4
+## UPnP External Connectivity + WebRTC Auto-connect — v1.1.5
 
 ### What was built
 
-**WebRTC peer-to-peer direct sync** between Chronicle instances, using the existing Nostr relay as a signalling channel. No external infrastructure required — works whenever two instances are on the same local network (STUN handles most NAT traversal cases).
+**UPnP automatic port mapping** so family members on different networks can connect directly without any configuration. The app silently requests a port-forward from the user's router on startup. If successful, invite codes automatically advertise the external address — remote instances connect straight in.
+
+**WebRTC auto-connect on session start** — no longer need to press "Connect directly" each session. As soon as contacts are loaded, WebRTC connections are initiated automatically.
 
 ### New files
-- `src/lib/webrtc.ts` — `PeerConnection` class wrapping `RTCPeerConnection` + `RTCDataChannel`
-  - `createOffer()` / `createAnswer(remoteSdp)` / `applyAnswer(remoteSdp)`
-  - `addIceCandidate(candidateJson)` — handles incremental ICE
-  - `sendEvent(event)` — sends JSON `{ type: 'event', event }` over the data channel
-  - ICE gathering waits up to 3s before returning SDP (bundles most candidates)
-- `src/lib/webrtcSignal.ts` — `PeerManager` class managing all active peer connections
-  - `initiateWebRTC(targetNpub)` — creates offer, publishes kind 30097 to relay
-  - `onSignalEvent(event)` — routes kinds 30097/30098/30099 to the correct handler
-  - On connection: pushes all local raw events to the peer; ingests all incoming events
-  - Dedup guard: won't re-initiate if peer is already in `new`/`connecting`/`connected` state
-- `src/lib/webrtc.test.ts` — 24 tests covering both modules
+- `electron/upnp.cjs` — `attemptUPnP(internalPort, externalPort, log)` and `removeUPnPMapping(externalPort, log)`. Uses `nat-upnp@1.1.1` (pure JS, no native compilation). 8s discovery timeout, 30-min lease TTL. Removed cleanly on app quit.
 
 ### Files changed
-- `src/types/chronicle.ts` — added `WEBRTC_OFFER: 30097`, `WEBRTC_ANSWER: 30098`, `WEBRTC_ICE: 30099`
-- `relay/server.js` — added 30097, 30098, 30099 to `CHRONICLE_KINDS`
-- `src/lib/relaySync.ts` — added `setSignalEventHandler()` export; added cases for 30097/30098/30099 in `ingestEvent` switch (signal events are NOT stored — ephemeral only)
-- `src/context/AppContext.tsx` — `PeerManager` initialised on relay connect; `initiateWebRTC` and `peerStates` exposed on context; `stopRelay` cleans up all peer connections; `ingestEvent` added to relaySync imports
-- `src/components/FamilyTreeView.tsx` — "⚡ Connect directly" button in ActionPanel for contact nodes; shows "Direct sync active" + status indicator when connected; button disabled during connecting/connected states
+- `electron/main.cjs`
+  - `RELAY_HOST` changed from `127.0.0.1` → `0.0.0.0` (relay now accepts external connections)
+  - UPnP attempted 3s after relay start (primary instance only — secondary instances are local-test only)
+  - `externalRelayUrl` stored in module scope; exposed via `get-external-relay-url` IPC
+  - `upnp-url-ready` IPC event sent to renderer when mapping succeeds
+  - `removeUPnPMapping` called on `window-all-closed`
+- `electron/preload.cjs` — `getExternalRelayUrl()` and `onUpnpUrlReady(callback)` added to `chronicleElectron` bridge
+- `src/context/AppContext.tsx`
+  - `externalRelayUrl` state; `useEffect` subscribes to `onUpnpUrlReady` and polls `getExternalRelayUrl` on mount
+  - `sendJoinRequest` and `acceptJoinRequest` use `externalRelayUrl ?? LOCAL_RELAY_URL`
+  - `externalRelayUrl` exposed on context interface and value
+  - Auto-connect: after contacts load and relay connections establish (4s delay), `PeerManager.initiateWebRTC` called for all contacts
+- `src/App.tsx` — invite codes pass `externalRelayUrl ?? localRelayUrl` to `InviteModal`
+- `src/components/SettingsView.tsx` — UPnP status card in relay section: green "Active" + external URL when working, amber "Local network only" when not
 
-### Signal event flow
-1. Alice clicks "Connect directly" on Bob's node → `initiateWebRTC(bob.npub)`
-2. `PeerManager` creates `PeerConnection`, calls `createOffer()`, publishes kind 30097 to relay
-3. Bob's relay subscription delivers the offer → `ingestEvent` routes to `onSignalEvent`
-4. `PeerManager` creates answer, publishes kind 30098
-5. Alice applies answer → WebRTC handshake completes
-6. Data channel opens → both sides push all raw events to each other
-7. Subsequent events are sent directly over the data channel (no relay hop)
+### Behaviour
+- **UPnP available (~70–80% of home routers):** app maps port 4869 externally, discovers WAN IP, invite codes include `ws://EXTERNAL_IP:4869`. Remote instances connect directly.
+- **UPnP unavailable (corporate, strict routers):** non-fatal, logged, relay continues on local network. Settings page shows "Local network only". User can share relay via paid add-on (future).
+- **WebRTC auto-connect:** fires 4s after contacts load. Dedup guard in PeerManager prevents double-connections. No user action needed after initial pairing.
 
-### Key constraints noted
-- WebRTC is browser API — available in Electron's renderer process, no native module needed
-- Signal events (kinds 30097–30099) are NOT stored in the raw event store (return `false` from `ingestEvent`)
-- Data channel connection is not persistent — reconnect needed after app restart (relay remains durable store)
-- STUN handles most NAT traversal; symmetric NAT cases (minority) will fall back to relay sync
+### Gotcha — nat-upnp install wipes better-sqlite3 mock
+Running `npm install nat-upnp` (or any `npm install`) recreates `node_modules` and removes the mock at `node_modules/better-sqlite3/`. Always restore after any npm install:
+```
+mkdir -p node_modules/better-sqlite3
+cp src/__mocks__/better-sqlite3.js node_modules/better-sqlite3/index.js
+echo '{"name":"better-sqlite3","version":"9.0.0","main":"index.js"}' > node_modules/better-sqlite3/package.json
+```
 
-### Version: v1.1.4 | Tests: 711/711 | TypeScript: clean | Build: clean
+### Version: v1.1.5 | Tests: 711/711 | TypeScript: clean | Build: clean
 
 ---
 
 ## ⚠️ NEXT SESSION HANDOVER
 
-### Last version pushed to GitHub: v1.1.4
-### Last tarball delivered: chronicle-v1_1_4-handoff.tar.gz
+### Last version pushed to GitHub: v1.1.5
+### Last tarball delivered: chronicle-v1_1_5.tar.gz
 ### Tests: 711/711 | TypeScript: clean | Build: clean
 
 ### Deferred bugs (still pending)
 **Bug A — Stories privacy model incomplete**
-Stories (kind 30096) published to all relays with no privacy tier. Add `['tier', 'family'|'private']` tag and client-side filtering. Design: default `family` (visible to contacts), optional `private` (author-only). No NaCl encryption needed for phase 1.
+Stories (kind 30096) published to all relays with no privacy tier. Add `['tier', 'family'|'private']` tag and client-side filtering.
 
 **Bug B — Two Maria nodes may appear in tree**
-After `reconcilePersonAliases` registers `{ localId: maria.npub, remoteId: maria.uuid }`, both records remain in store. `traverseGraph` resolves them but the People list may show both. Dedup logic in TreeView needs revisiting after alias table change.
+After alias reconciliation both person records remain in store. Dedup logic in TreeView needs revisiting.
 
 **Bug C — `persistStore` not called after `reconcilePersonAliases` in session restore path**
-Functionally correct (aliases re-registered on every startup from raw events) but a `persistStore()` call after restore would make the alias table durable.
+Functionally correct but wasteful; a `persistStore()` after restore would make alias table durable.
 
 ### Next session options
-1. **Fix deferred bugs A/B/C** — straightforward, improves correctness
-2. **FamilySearch API integration** — highest-value external data source, free API
-3. **WebRTC TURN fallback** — for symmetric NAT cases (minority of users); requires a TURN server
+1. **Fix deferred bugs A/B/C**
+2. **Remote instance testing** — once Matt has a third instance on another machine, validate UPnP connectivity end-to-end
+3. **FamilySearch API integration**
 
 ### Session start checklist
-1. Extract tarball: `tar -xzf chronicle-v1_1_4-handoff.tar.gz -C C:\Users\Matt\Desktop\Websites\Chronicle\`
+1. Extract: `tar -xzf chronicle-v1_1_5.tar.gz -C C:\Users\Matt\Desktop\Websites\Chronicle\`
 2. Read Design Plan and Implementation Log
 3. Restore mock: `mkdir -p node_modules/better-sqlite3 && cp src/__mocks__/better-sqlite3.js node_modules/better-sqlite3/index.js && echo '{"name":"better-sqlite3","version":"9.0.0","main":"index.js"}' > node_modules/better-sqlite3/package.json`
-4. Run baseline: expect 711/711
+4. Baseline: expect 711/711
 
 ### Deployment
 ```
 cd C:\Users\Matt\Desktop\Websites\Chronicle\chronicle-export
-tar -xzf C:\Users\Matt\Desktop\Websites\Chronicle\chronicle-v1_1_4-handoff.tar.gz -C C:\Users\Matt\Desktop\Websites\Chronicle\
+git status
 git add -A
-git commit -m "v1.1.4 — WebRTC P2P direct sync"
+git commit -m "v1.1.5 — UPnP external connectivity + WebRTC auto-connect"
 git push
-git tag v1.1.4
-git push origin v1.1.4
+git tag v1.1.5
+git push origin v1.1.5
 ```

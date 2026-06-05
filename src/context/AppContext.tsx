@@ -114,6 +114,8 @@ interface AppContextValue {
   publishEvent: (event: ChronicleEvent) => void
   relayStatuses: Record<string, RelayStatus>
   localRelayUrl: string
+  /** External relay URL if UPnP mapping succeeded, otherwise null */
+  externalRelayUrl: string | null
   /** Increments every time remote sync delivers new data — components use this to re-render */
   syncVersion: number
   broadcastSettings: BroadcastSettings
@@ -217,6 +219,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // WebRTC
   const peerManagerRef = useRef<PeerManager | null>(null)
   const [peerStates, setPeerStates] = useState<Record<string, PeerState>>({})
+
+  // External relay URL — set once UPnP mapping succeeds
+  const [externalRelayUrl, setExternalRelayUrl] = useState<string | null>(null)
+
+  // Listen for UPnP URL from Electron main process
+  useEffect(() => {
+    const electron = (window as any).chronicleElectron
+    if (!electron?.onUpnpUrlReady) return
+    // Check if already available (app was started before this component mounted)
+    electron.getExternalRelayUrl?.().then((url: string | null) => {
+      if (url) setExternalRelayUrl(url)
+    }).catch(() => {})
+    // Subscribe to future updates
+    const unsub = electron.onUpnpUrlReady((url: string) => {
+      setExternalRelayUrl(url)
+    })
+    return unsub
+  }, [])
 
   // ── Contact helpers ────────────────────────────────────────────────────────
   // allowlistAdd first — startRelay's handlers reference it before it would
@@ -375,10 +395,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const sendJoinRequest = useCallback((targetNpub: string, targetRelay: string) => {
     if (!session) return
+    // Advertise external URL if UPnP is available — this is how the remote
+    // instance knows where to connect back to us. Fall back to local URL.
+    const myRelayUrl = externalRelayUrl ?? LOCAL_RELAY_URL
     // Build and sign the join request event
     const event = buildJoinRequestEvent(
       session.npub, session.nsec,
-      targetNpub, LOCAL_RELAY_URL,
+      targetNpub, myRelayUrl,
       session.displayName || session.npub.slice(0, 16) + '…',
     )
     // Publish the join request directly to the target relay — NOT via the
@@ -406,7 +429,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     // Add them locally so the contact shows while the request is in flight
     addContact(targetNpub, targetRelay, targetNpub.slice(0, 16) + '…')
-  }, [session, addContact])
+  }, [session, addContact, externalRelayUrl])
 
   const acceptJoinRequest = useCallback((eventId: string) => {
     const req = joinQueueRef.current.get(eventId)
@@ -421,7 +444,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const acceptEvent = buildJoinAcceptEvent(
         session.npub, session.nsec,
         req.requesterNpub, req.eventId,
-        LOCAL_RELAY_URL,
+        externalRelayUrl ?? LOCAL_RELAY_URL,
       )
       if (poolRef.current) {
         const pool = poolRef.current
@@ -692,6 +715,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   for (const c of mgr.getAll()) {
                     connectToRelay(c.relay, pool)
                   }
+                  // Auto-initiate WebRTC with all contacts once relay connections
+                  // are established. The PeerManager dedup guard means this is
+                  // safe to call even if already connected.
+                  setTimeout(() => {
+                    const pm = peerManagerRef.current
+                    if (!pm) return
+                    for (const c of mgr.getAll()) {
+                      void pm.initiateWebRTC(c.npub)
+                    }
+                  }, 4000) // extra delay to let relay sync settle first
                 }, 2000)
               }
             }
@@ -1012,6 +1045,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         relayStatuses,
         syncVersion,
         localRelayUrl: LOCAL_RELAY_URL,
+        externalRelayUrl,
         broadcastSettings,
         updateBroadcastSettings,
         syncStatus,

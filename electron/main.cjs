@@ -37,8 +37,13 @@ const instanceNum  = instanceArg ? Math.max(1, parseInt(instanceArg.split('=')[1
 const isSecondary  = instanceNum > 1
 
 const RELAY_PORT = 4869 + (instanceNum - 1)   // 4869, 4870, 4871 ...
-const RELAY_HOST = '127.0.0.1'
+const RELAY_HOST = '0.0.0.0'   // bind to all interfaces so UPnP-forwarded connections are accepted
+const RELAY_EXTERNAL_PORT = RELAY_PORT   // external port matches internal by default
 const isDev      = process.env.NODE_ENV === 'development' || !app.isPackaged
+
+// UPnP for external connectivity
+const { attemptUPnP, removeUPnPMapping } = require('./upnp.cjs')
+let externalRelayUrl = null   // set after successful UPnP mapping
 
 // Secondary instances need a separate userData directory so each has its own
 // identity, key material, and SQLite database.
@@ -82,13 +87,38 @@ if (!gotLock) {
     const win = createWindow()
     setupAutoUpdater(win)
 
+    // Attempt UPnP port mapping after relay starts.
+    // Only the primary instance maps the external port — secondary instances
+    // are for local testing only and don't need external access.
+    if (!isSecondary) {
+      // Give the relay a moment to start before attempting UPnP
+      setTimeout(async () => {
+        try {
+          const url = await attemptUPnP(RELAY_PORT, RELAY_EXTERNAL_PORT, relayLog)
+          if (url) {
+            externalRelayUrl = url
+            relayLog(`[main] External relay URL set: ${url}`)
+            // Notify the renderer so invite codes can include it immediately
+            mainWindow?.webContents?.send('upnp-url-ready', url)
+          } else {
+            relayLog('[main] UPnP unavailable — relay accessible on local network only')
+          }
+        } catch (err) {
+          relayLog(`[main] UPnP error (non-fatal): ${err.message}`)
+        }
+      }, 3000)
+    }
+
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
     })
   })
 
-  app.on('window-all-closed', () => {
+  app.on('window-all-closed', async () => {
     stopRelay()
+    if (externalRelayUrl && !isSecondary) {
+      await removeUPnPMapping(RELAY_EXTERNAL_PORT, relayLog).catch(() => {})
+    }
     if (process.platform !== 'darwin') app.quit()
   })
 
@@ -129,6 +159,9 @@ function setupAutoUpdater(win) {
 
 ipcMain.handle('get-version',   () => app.getVersion())
 ipcMain.handle('get-relay-port', () => RELAY_PORT)
+
+// Returns the external relay URL once UPnP mapping is established, or null
+ipcMain.handle('get-external-relay-url', () => externalRelayUrl)
 ipcMain.handle('get-instance',   () => instanceNum)
 
 // Write pubkey directly to the allowlist file AND notify the running relay
