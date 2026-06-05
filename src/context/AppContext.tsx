@@ -26,7 +26,7 @@ import { generateUserKeyMaterial, importKeyMaterial, nsecToHex, npubToHex } from
 import { encryptWithPassword, decryptWithPassword } from '../lib/storage'
 import { RelayPool, type RelayStatus } from '../lib/relay'
 import { broadcastQueue } from '../lib/queue'
-import { startSync, fetchOnConnect, ingestAvatarEvent, ingestStoryEvent, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, replayStoredFactClaims, reconcilePersonAliases, replayStoredIdentityAnchors, setContactPubkeysProvider, setSyncUpdateHandler, getAvatar as rsGetAvatar, getStoriesForPerson as rsGetStoriesForPerson, replayStoredMediaEvents } from '../lib/relaySync'
+import { startSync, fetchOnConnect, ingestEvent, ingestAvatarEvent, ingestStoryEvent, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, replayStoredFactClaims, reconcilePersonAliases, replayStoredIdentityAnchors, setContactPubkeysProvider, setSyncUpdateHandler, setSignalEventHandler, getAvatar as rsGetAvatar, getStoriesForPerson as rsGetStoriesForPerson, replayStoredMediaEvents } from '../lib/relaySync'
 import { buildJoinRequestEvent, buildJoinAcceptEvent, buildRelationshipClaim, buildFactClaim, buildIdentityAnchor, buildAvatarEvent, buildStoryEvent } from '../lib/eventBuilder'
 import { processAvatarImage } from '../lib/media'
 import { ContactListManager, type Contact } from '../lib/contactList'
@@ -39,6 +39,8 @@ import { serialiseGraph, deserialiseGraph, retractRelationship, getRelationships
 import { storageGet, storageSet } from '../lib/appStorage'
 import { keyRecoveryStore } from '../lib/keyRecovery'
 import { mediaCache, type MediaCacheEntry } from '../lib/blossom'
+import { PeerManager, type SignallingDeps } from '../lib/webrtcSignal'
+import type { PeerState } from '../lib/webrtc'
 import type { KeyMaterial, ChronicleEvent } from '../types/chronicle'
 
 // ─── Broadcast Target ─────────────────────────────────────────────────────────
@@ -159,6 +161,11 @@ interface AppContextValue {
   addStory: (personId: string, title: string, content: string) => Promise<void>
   /** Get all stories for a person. */
   getStoriesForPerson: (personId: string) => import('../types/chronicle').PersonStory[]
+  // WebRTC P2P sync
+  /** Initiate a direct WebRTC connection to a contact by their npub. */
+  initiateWebRTC: (targetNpub: string) => Promise<void>
+  /** Map of peer npub → connection state for UI display. */
+  peerStates: Record<string, PeerState>
 }
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -206,6 +213,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Stage 5
   const [familyKey, setFamilyKey] = useState<Uint8Array | null>(null)
   const [mediaCacheEntries, setMediaCacheEntries] = useState<MediaCacheEntry[]>([])
+
+  // WebRTC
+  const peerManagerRef = useRef<PeerManager | null>(null)
+  const [peerStates, setPeerStates] = useState<Record<string, PeerState>>({})
 
   // ── Contact helpers ────────────────────────────────────────────────────────
   // allowlistAdd first — startRelay's handlers reference it before it would
@@ -567,6 +578,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
       addContactAndConnect(accept.acceptorNpub, accept.acceptorRelay, pool)
     })
 
+    // Initialise WebRTC PeerManager once we have a relay client.
+    // We attach it after the pool connects so we have a RelayClient reference.
+    // The signal handler is registered immediately so signal events arriving
+    // before the first connection are queued.
+    const initPeerManager = (client: import('../lib/relay').RelayClient) => {
+      const sess = sessionRef.current
+      if (!sess) return
+      const deps: SignallingDeps = {
+        myNpub: sess.npub,
+        myNsec: sess.nsec,
+        relayClient: client,
+        getRawEvents: () => store.getAllRawEvents(),
+        onPeerEvent: (event) => {
+          // Route peer events through ingestEvent
+          if (ingestEvent(event)) {
+            replayStoredFactClaims()
+            reconcilePersonAliases()
+            replayStoredMediaEvents()
+            setSyncVersion(v => v + 1)
+            persistStore()
+          }
+        },
+        onPeerStateChange: (peerId, state) => {
+          setPeerStates(prev => ({ ...prev, [peerId]: state }))
+        },
+      }
+      const pm = new PeerManager(deps)
+      peerManagerRef.current = pm
+      setSignalEventHandler((event) => { void pm.onSignalEvent(event) })
+    }
+
     const client = pool.add(LOCAL_RELAY_URL)
     client.onStatusChange((status) => {
       setRelayStatuses({ ...pool.getStatuses() })
@@ -574,6 +616,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setSyncStatus('syncing')
         fetchOnConnect(client).then(() => { replayStoredFactClaims(); reconcilePersonAliases(); replayStoredMediaEvents(); setSyncStatus('done'); setSyncVersion(v => v + 1) }).catch(() => setSyncStatus('error'))
         syncUnsubRef.current = startSync(client)
+        // Initialise WebRTC PeerManager once relay is connected
+        if (!peerManagerRef.current) initPeerManager(client)
       }
     })
 
@@ -594,6 +638,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     poolRef.current?.destroy()
     poolRef.current = null
     setRelayStatuses({})
+    peerManagerRef.current?.closeAll()
+    peerManagerRef.current = null
+    setPeerStates({})
+  }, [])
+
+  const initiateWebRTC = useCallback(async (targetNpub: string): Promise<void> => {
+    if (!peerManagerRef.current) {
+      console.warn('[WebRTC] PeerManager not initialised yet')
+      return
+    }
+    await peerManagerRef.current.initiateWebRTC(targetNpub)
   }, [])
 
   // ── Session helpers ────────────────────────────────────────────────────────
@@ -995,6 +1050,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         getAvatar: getAvatarForPerson,
         addStory,
         getStoriesForPerson: getStoriesForPersonCb,
+        // WebRTC P2P sync
+        initiateWebRTC,
+        peerStates,
       }}
     >
       {children}

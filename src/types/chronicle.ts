@@ -30,6 +30,10 @@ export const EventKind = {
   FAMILY_KEY_ADMISSION: 30094,
   BLOSSOM_REF: 30095,
   STORY: 30096,
+  // WebRTC signalling
+  WEBRTC_OFFER: 30097,
+  WEBRTC_ANSWER: 30098,
+  WEBRTC_ICE: 30099,
 } as const
 
 export type EventKindValue = (typeof EventKind)[keyof typeof EventKind]

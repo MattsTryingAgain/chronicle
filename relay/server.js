@@ -68,6 +68,8 @@ const CHRONICLE_KINDS = new Set([
   30094,
   // Media Phase 1
   30095, 30096,
+  // WebRTC signalling
+  30097, 30098, 30099,
 ])
 
 const MAX_FILTERS_PER_REQ = 10

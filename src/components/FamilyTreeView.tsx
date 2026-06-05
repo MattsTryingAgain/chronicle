@@ -113,7 +113,7 @@ interface ActionPanelProps {
 type ActionPanelView = 'main' | 'photos' | 'stories'
 
 function ActionPanel({ personId, rootPubkey, onClose, onMakeRoot, onTreeRefresh, onPersonDeleted }: ActionPanelProps) {
-  const { contacts, getAvatar, syncVersion, session } = useApp()
+  const { contacts, getAvatar, syncVersion, session, initiateWebRTC, peerStates } = useApp()
   const [profileModal, setProfileModal] = useState<'view' | 'edit' | null>(null)
   const [subPanel, setSubPanel] = useState<ActionPanelView>('main')
   void syncVersion // causes re-render when avatar/story is added
@@ -212,6 +212,34 @@ function ActionPanel({ personId, rootPubkey, onClose, onMakeRoot, onTreeRefresh,
             </button>
           </div>
         )}
+        {isContact && (() => {
+          const contactNpub = contacts.find(c => personAliasIds.has(c.npub))?.npub ?? personId
+          const peerState = peerStates[contactNpub]
+          const isConnected = peerState === 'connected'
+          const isConnecting = peerState === 'connecting' || peerState === 'new'
+          return (
+            <div style={{ padding: '8px 16px', borderTop: isRoot ? '1px solid var(--border-soft)' : undefined }}>
+              <button
+                className="btn btn-sm"
+                style={{
+                  width: '100%', justifyContent: 'center',
+                  background: isConnected ? 'var(--gold)' : 'var(--navy)',
+                  color: '#fff', opacity: isConnecting ? 0.7 : 1,
+                  cursor: isConnecting ? 'default' : 'pointer',
+                }}
+                disabled={isConnecting || isConnected}
+                onClick={() => { void initiateWebRTC(contactNpub) }}
+              >
+                {isConnected ? '⚡ Direct sync active' : isConnecting ? '⏳ Connecting…' : '⚡ Connect directly'}
+              </button>
+              {isConnected && (
+                <div style={{ fontSize: 10, color: 'var(--ink-muted)', textAlign: 'center', marginTop: 4 }}>
+                  Syncing directly — no relay needed
+                </div>
+              )}
+            </div>
+          )
+        })()}
         {rootPubkey !== session?.npub && (
           <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-soft)' }}>
             <button className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'center' }}

@@ -2287,3 +2287,227 @@ Additionally, `allIdsForPerson` and `resolveAliasIds` only did a "forward" alias
 - `src/lib/media.test.ts` — 1 new end-to-end scenario test
 
 ### Version: v1.1.3 | Tests: 687/687 | TypeScript: clean | Build: clean
+
+---
+
+## ⚠️ NEXT SESSION HANDOVER — READ THIS FIRST
+
+### Last version pushed to GitHub: v1.1.3
+### Last tarball delivered: chronicle-v1_1_3-handoff.tar.gz
+### Tests: 687/687 | TypeScript: clean | Build: clean
+
+---
+
+### What was accomplished this session (Media Phase 1 + Sync fixes)
+
+**Media Phase 1 delivered (v1.0.93):**
+- Profile pictures: kind 30095 events, base64 inline, ≤512px/200KB, client-side resize
+- Stories: kind 30096 events, plain text, title + content
+- `src/lib/media.ts` — `processAvatarImage`, `estimateBase64Size`
+- `PhotosPanel.tsx`, `StoriesPanel.tsx`, `AvatarDisplay` component
+- Avatars shown at 48px (action panel), 80px (profile card), 40px (people list), gold dot indicator on tree nodes
+
+**Extensive sync/alias bug fixes (v1.0.94–v1.1.3):**
+- relay `CHRONICLE_KINDS` extended to 30078–30096 (was missing 30091–30096 — silently rejecting avatar/story events)
+- `ingestAvatarEvent`/`ingestStoryEvent` called before `publishEvent` to bypass dedup guard
+- `reconcilePersonAliases()` — scans raw name claims, auto-aliases UUID stubs to npub records by name match. **Critical bug fixed in v1.1.3**: wrong `getPerson(subjectId)` skip condition was preventing the alias from ever registering
+- `resolveAliasIds` (graph.ts) and `allIdsForPerson` (relaySync.ts) — both now do reverse alias lookup (check if personId appears as `remoteId` in any alias entry)
+- `replayStoredIdentityAnchors()` — re-runs after contacts load; `tryAutoAliasContact` for contact-npub matching
+- `graphRoot` always set to `session.npub` on first open (was using raw string check against relationship IDs, failing when relationships stored under UUID alias)
+- Tree layout: deterministic node ordering per generation (was BFS-order dependent, differed between instances)
+- Auto-fit: horizontal centred on root, vertical centred on bounding box (was either bounding-box centred or fixed 60% — both wrong)
+- `syncVersion` bumped after all `fetchOnConnect` chains (avatar was not re-rendering after session restore)
+- "Return to my tree" moved from toolbar into action panel footer
+- Contact badge now alias-aware; `onMakeRoot` resolves to contact's actual npub
+
+---
+
+### Known bugs deferred to next session
+
+**Bug A — Stories privacy model incomplete**
+Stories (kind 30096) are published to all connected relays with no privacy tier. A `['tier', 'family'|'private']` tag and client-side filtering should be added. Currently all stories are visible to all connected instances. Agreed design: default `family` tier (visible to contacts), optional `private` (author-only). No NaCl encryption needed for phase 1 — just tag-based filtering.
+
+**Bug B — Two Maria nodes can appear in tree**
+When `reconcilePersonAliases` runs and registers `{ localId: maria.npub, remoteId: maria.uuid }`, both records remain in the store. `traverseGraph` now resolves them as aliases, but the store still has two person records. The People list (TreeView) may show both. The `resolveCanonicalPubkey`/`areAliases` dedup in TreeView should hide the non-canonical one — but after the alias table change, the "canonical" determination may need revisiting. Should be verified and cleaned up.
+
+**Bug C — `persistStore` not called after `reconcilePersonAliases` in session restore path**
+The aliases registered during session restore (pre-unlock) are not persisted to disk immediately. They're re-registered on every startup from raw events, so functionally correct — but a clean `persistStore()` call after the restore block would make the alias table durable and reduce startup work.
+
+---
+
+### Primary objective for next session: WebRTC peer-to-peer sync
+
+**Current state:** Zero WebRTC code exists. The relay (`relay/server.js`) is the only sync mechanism. Remote sync currently requires port-forwarding or a VPS relay. WebRTC is needed for direct peer-to-peer sync between family members on different networks without infrastructure.
+
+**Design (from Design Plan):**
+- Two Chronicle instances sync directly via WebRTC — handles NAT traversal
+- The existing Nostr relay is used as the **signalling channel** (no separate signalling server needed)
+- A lightweight STUN server (Google's public `stun:stun.l.google.com:19302`) handles NAT traversal for most cases
+- TURN relay only needed for symmetric NAT (minority of cases) — can be deferred
+
+**How Nostr-relay-as-signalling works:**
+1. Alice publishes a WebRTC offer as a kind 30091 (JOIN_REQUEST) variant, or a new private kind, tagged to Bob's npub
+2. Bob receives it via the relay subscription, creates an answer, publishes it back
+3. ICE candidates are exchanged the same way (each as a small event)
+4. Once the peer connection is established, relay events are mirrored directly over the data channel
+
+**Proposed new event kinds:**
+- Kind 30097 — WebRTC offer: `['to', targetNpub]`, `['sdp', offerSdp]`
+- Kind 30098 — WebRTC answer: `['to', targetNpub]`, `['sdp', answerSdp]`
+- Kind 30099 — ICE candidate: `['to', targetNpub]`, `['candidate', candidateJson]`
+
+These should be added to `CHRONICLE_KINDS` in `relay/server.js` and `EventKind` in `chronicle.ts`.
+
+**Implementation order:**
+1. `src/lib/webrtc.ts` — `PeerConnection` class wrapping `RTCPeerConnection` + `RTCDataChannel`
+   - `createOffer()` → SDP string
+   - `createAnswer(remoteSdp)` → SDP string
+   - `addIceCandidate(candidateJson)`
+   - `onIceCandidate` callback
+   - `onDataChannel` / `sendData(data)` callbacks
+   - `onMessage` callback — fires when data arrives from peer
+2. `src/lib/webrtcSignal.ts` — signalling layer on top of the relay
+   - `sendOffer(targetNpub, sdp)` — publishes kind 30097 event
+   - `sendAnswer(targetNpub, sdp)` — publishes kind 30098 event
+   - `sendIceCandidate(targetNpub, candidate)` — publishes kind 30099 event
+   - `onSignalEvent(event)` — called from `ingestEvent` for kinds 30097–30099
+3. `src/lib/relaySync.ts` — add cases for 30097, 30098, 30099 in `ingestEvent` switch, routing to `onSignalEvent`
+4. `relay/server.js` — add 30097, 30098, 30099 to `CHRONICLE_KINDS`
+5. `src/context/AppContext.tsx` — `initiateWebRTC(contactNpub)` and `acceptWebRTC(offer)` exposed on context; wire into the Connect tab UI
+6. `src/components/ConnectView.tsx` (or `SettingsView.tsx`) — "Connect directly" button per contact that initiates the WebRTC handshake
+7. Once data channel is open: mirror all events from local raw store to the peer, and ingest all events received from the peer via `ingestEvent`
+
+**Data channel message format:**
+Simple JSON envelope: `{ type: 'event', event: ChronicleEvent }` — same event shape as relay events. The receiver calls `ingestEvent(event)` for each received event. No custom protocol needed.
+
+**Key constraints:**
+- WebRTC is browser API — available in Electron's renderer process. No native module needed.
+- `RTCPeerConnection` is available in both Electron (Chromium) and standard browsers
+- SDP strings can be large (~2KB) — fine as Nostr event content
+- ICE candidates arrive asynchronously after `createOffer`/`createAnswer` — the signalling must handle the async flow correctly
+- Data channels are not persistent — if the app restarts, the WebRTC connection must be re-established. The relay remains the durable store; WebRTC is only for live sync speed
+
+**STUN configuration:**
+```js
+const RTC_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ]
+}
+```
+
+**Testing approach:**
+Same two-instance setup used throughout this session. With WebRTC, changes made in instance 1 should appear in instance 2 without needing a relay restart or manual re-sync — the data channel delivers them directly.
+
+---
+
+### Session start checklist for next Claude
+
+1. Extract tarball: `tar -xzf chronicle-v1_1_3-handoff.tar.gz -C C:\Users\Matt\Desktop\Websites\Chronicle\`
+2. Read Design Plan and this Implementation Log fully
+3. Restore mock: `mkdir -p node_modules/better-sqlite3 && cp src/__mocks__/better-sqlite3.js node_modules/better-sqlite3/index.js && echo '{"name":"better-sqlite3","version":"9.0.0","main":"index.js"}' > node_modules/better-sqlite3/package.json`
+4. Run baseline: expect 687/687
+5. Add kinds 30097–30099 to `EventKind` in `chronicle.ts` and `CHRONICLE_KINDS` in `relay/server.js`
+6. Build WebRTC in the order above
+7. TypeScript + build + full test run before packaging
+8. Deliver tarball + updated log
+
+### Deployment reminder
+```
+cd C:\Users\Matt\Desktop\Websites\Chronicle\chronicle-export
+tar -xzf C:\Users\Matt\Desktop\Websites\Chronicle\<tarball>.tar.gz -C C:\Users\Matt\Desktop\Websites\Chronicle\
+git add -A
+git commit -m "vX.X.X — description"
+git push
+git tag vX.X.X
+git push origin vX.X.X
+```
+
+### Current version at end of this session: v1.1.3
+### Tests: 687/687 | TypeScript: clean | Build: clean
+
+---
+
+## WebRTC P2P Sync — v1.1.4
+
+### What was built
+
+**WebRTC peer-to-peer direct sync** between Chronicle instances, using the existing Nostr relay as a signalling channel. No external infrastructure required — works whenever two instances are on the same local network (STUN handles most NAT traversal cases).
+
+### New files
+- `src/lib/webrtc.ts` — `PeerConnection` class wrapping `RTCPeerConnection` + `RTCDataChannel`
+  - `createOffer()` / `createAnswer(remoteSdp)` / `applyAnswer(remoteSdp)`
+  - `addIceCandidate(candidateJson)` — handles incremental ICE
+  - `sendEvent(event)` — sends JSON `{ type: 'event', event }` over the data channel
+  - ICE gathering waits up to 3s before returning SDP (bundles most candidates)
+- `src/lib/webrtcSignal.ts` — `PeerManager` class managing all active peer connections
+  - `initiateWebRTC(targetNpub)` — creates offer, publishes kind 30097 to relay
+  - `onSignalEvent(event)` — routes kinds 30097/30098/30099 to the correct handler
+  - On connection: pushes all local raw events to the peer; ingests all incoming events
+  - Dedup guard: won't re-initiate if peer is already in `new`/`connecting`/`connected` state
+- `src/lib/webrtc.test.ts` — 24 tests covering both modules
+
+### Files changed
+- `src/types/chronicle.ts` — added `WEBRTC_OFFER: 30097`, `WEBRTC_ANSWER: 30098`, `WEBRTC_ICE: 30099`
+- `relay/server.js` — added 30097, 30098, 30099 to `CHRONICLE_KINDS`
+- `src/lib/relaySync.ts` — added `setSignalEventHandler()` export; added cases for 30097/30098/30099 in `ingestEvent` switch (signal events are NOT stored — ephemeral only)
+- `src/context/AppContext.tsx` — `PeerManager` initialised on relay connect; `initiateWebRTC` and `peerStates` exposed on context; `stopRelay` cleans up all peer connections; `ingestEvent` added to relaySync imports
+- `src/components/FamilyTreeView.tsx` — "⚡ Connect directly" button in ActionPanel for contact nodes; shows "Direct sync active" + status indicator when connected; button disabled during connecting/connected states
+
+### Signal event flow
+1. Alice clicks "Connect directly" on Bob's node → `initiateWebRTC(bob.npub)`
+2. `PeerManager` creates `PeerConnection`, calls `createOffer()`, publishes kind 30097 to relay
+3. Bob's relay subscription delivers the offer → `ingestEvent` routes to `onSignalEvent`
+4. `PeerManager` creates answer, publishes kind 30098
+5. Alice applies answer → WebRTC handshake completes
+6. Data channel opens → both sides push all raw events to each other
+7. Subsequent events are sent directly over the data channel (no relay hop)
+
+### Key constraints noted
+- WebRTC is browser API — available in Electron's renderer process, no native module needed
+- Signal events (kinds 30097–30099) are NOT stored in the raw event store (return `false` from `ingestEvent`)
+- Data channel connection is not persistent — reconnect needed after app restart (relay remains durable store)
+- STUN handles most NAT traversal; symmetric NAT cases (minority) will fall back to relay sync
+
+### Version: v1.1.4 | Tests: 711/711 | TypeScript: clean | Build: clean
+
+---
+
+## ⚠️ NEXT SESSION HANDOVER
+
+### Last version pushed to GitHub: v1.1.4
+### Last tarball delivered: chronicle-v1_1_4-handoff.tar.gz
+### Tests: 711/711 | TypeScript: clean | Build: clean
+
+### Deferred bugs (still pending)
+**Bug A — Stories privacy model incomplete**
+Stories (kind 30096) published to all relays with no privacy tier. Add `['tier', 'family'|'private']` tag and client-side filtering. Design: default `family` (visible to contacts), optional `private` (author-only). No NaCl encryption needed for phase 1.
+
+**Bug B — Two Maria nodes may appear in tree**
+After `reconcilePersonAliases` registers `{ localId: maria.npub, remoteId: maria.uuid }`, both records remain in store. `traverseGraph` resolves them but the People list may show both. Dedup logic in TreeView needs revisiting after alias table change.
+
+**Bug C — `persistStore` not called after `reconcilePersonAliases` in session restore path**
+Functionally correct (aliases re-registered on every startup from raw events) but a `persistStore()` call after restore would make the alias table durable.
+
+### Next session options
+1. **Fix deferred bugs A/B/C** — straightforward, improves correctness
+2. **FamilySearch API integration** — highest-value external data source, free API
+3. **WebRTC TURN fallback** — for symmetric NAT cases (minority of users); requires a TURN server
+
+### Session start checklist
+1. Extract tarball: `tar -xzf chronicle-v1_1_4-handoff.tar.gz -C C:\Users\Matt\Desktop\Websites\Chronicle\`
+2. Read Design Plan and Implementation Log
+3. Restore mock: `mkdir -p node_modules/better-sqlite3 && cp src/__mocks__/better-sqlite3.js node_modules/better-sqlite3/index.js && echo '{"name":"better-sqlite3","version":"9.0.0","main":"index.js"}' > node_modules/better-sqlite3/package.json`
+4. Run baseline: expect 711/711
+
+### Deployment
+```
+cd C:\Users\Matt\Desktop\Websites\Chronicle\chronicle-export
+tar -xzf C:\Users\Matt\Desktop\Websites\Chronicle\chronicle-v1_1_4-handoff.tar.gz -C C:\Users\Matt\Desktop\Websites\Chronicle\
+git add -A
+git commit -m "v1.1.4 — WebRTC P2P direct sync"
+git push
+git tag v1.1.4
+git push origin v1.1.4
+```

@@ -65,6 +65,13 @@ export function setJoinAcceptHandler(fn: JoinAcceptHandler): void {
   onJoinAcceptReceived = fn
 }
 
+// WebRTC signal handler — set by AppContext when PeerManager is initialised
+type SignalEventHandler = (event: ChronicleEvent) => void
+let onSignalEvent: SignalEventHandler | null = null
+export function setSignalEventHandler(fn: SignalEventHandler): void {
+  onSignalEvent = fn
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /** All Chronicle event kinds — used as the fetch filter */
@@ -218,6 +225,13 @@ export function ingestEvent(event: ChronicleEvent): boolean {
       case EventKind.STORY:
         ingestStoryEvent(event)
         break
+      case EventKind.WEBRTC_OFFER:
+      case EventKind.WEBRTC_ANSWER:
+      case EventKind.WEBRTC_ICE:
+        // Signal events are NOT stored — they're ephemeral handshake messages.
+        // Route to PeerManager via the registered callback.
+        if (onSignalEvent) onSignalEvent(event)
+        return false  // Don't store or increment ingest count
       default:
         break
     }
