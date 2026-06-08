@@ -416,22 +416,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // own local relay first. We need it to go specifically to targetRelay.
     if (poolRef.current) {
       const pool = poolRef.current
-      // pool.add() returns the existing client if already connected
-      const client = pool.add(targetRelay)
-      const publishWhenReady = () => {
-        client.publish(event)
-      }
-      if (client.getStatus() === 'connected') {
-        publishWhenReady()
-      } else {
-        // Wait for the connection then publish once
-        const unsub = client.onStatusChange((status) => {
-          if (status === 'connected') {
-            unsub()
-            publishWhenReady()
-          }
-        })
-        client.connect()
+      // Publish to the target relay AND the bootstrap relay so the recipient
+      // sees it regardless of which relay they're currently watching.
+      const relaysToPublish = [targetRelay]
+      if (targetRelay !== CHRONICLE_RELAY_URL) relaysToPublish.push(CHRONICLE_RELAY_URL)
+      for (const relayUrl of relaysToPublish) {
+        const client = pool.add(relayUrl)
+        const publishWhenReady = () => { client.publish(event) }
+        if (client.getStatus() === 'connected') {
+          publishWhenReady()
+        } else {
+          const unsub = client.onStatusChange((status) => {
+            if (status === 'connected') {
+              unsub()
+              publishWhenReady()
+            }
+          })
+          client.connect()
+        }
       }
     }
     // Add them locally so the contact shows while the request is in flight
@@ -455,15 +457,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       )
       if (poolRef.current) {
         const pool = poolRef.current
-        const client = pool.add(req.requesterRelay)
-        const publishAccept = () => { client.publish(acceptEvent) }
-        if (client.getStatus() === 'connected') {
-          publishAccept()
-        } else {
-          const unsub = client.onStatusChange((status) => {
-            if (status === 'connected') { unsub(); publishAccept() }
-          })
-          client.connect()
+        // Publish accept to the requester's relay AND the bootstrap relay so
+        // remote instances on different networks both receive it.
+        const relaysToPublish = [req.requesterRelay]
+        if (req.requesterRelay !== CHRONICLE_RELAY_URL) relaysToPublish.push(CHRONICLE_RELAY_URL)
+        for (const relayUrl of relaysToPublish) {
+          const client = pool.add(relayUrl)
+          const publishAccept = () => { client.publish(acceptEvent) }
+          if (client.getStatus() === 'connected') {
+            publishAccept()
+          } else {
+            const unsub = client.onStatusChange((status) => {
+              if (status === 'connected') { unsub(); publishAccept() }
+            })
+            client.connect()
+          }
         }
       }
     }
