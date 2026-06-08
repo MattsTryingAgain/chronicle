@@ -5,7 +5,7 @@
  */
 
 import { useTranslation } from 'react-i18next'
-import { AppProvider, useApp } from './context/AppContext'
+import { AppProvider, useApp, CHRONICLE_RELAY_URL } from './context/AppContext'
 import { Onboarding } from './components/Onboarding'
 import { UnlockScreen } from './components/UnlockScreen'
 import { TreeView } from './components/TreeView'
@@ -48,7 +48,7 @@ function RelayDot() {
 function ConnectTab({ pendingMatchVersion }: { pendingMatchVersion: number }) {
   const { t } = useTranslation()
   const {
-    session, localRelayUrl, externalRelayUrl, contacts, removeContact,
+    session, externalRelayUrl, contacts, removeContact,
     joinRequests, acceptJoinRequest, rejectJoinRequest, reportBadActor,
     sendJoinRequest, syncVersion, repairRelationships, repushAllEvents,
   } = useApp()
@@ -120,7 +120,7 @@ function ConnectTab({ pendingMatchVersion }: { pendingMatchVersion: number }) {
         show={showInvite}
         onClose={() => setShowInvite(false)}
         userNpub={session.npub}
-        relayUrl={externalRelayUrl ?? localRelayUrl}
+        relayUrl={externalRelayUrl ?? CHRONICLE_RELAY_URL}
         onIncomingInvite={(npub, relay) => {
           sendJoinRequest(npub, relay)
           setShowInvite(false)

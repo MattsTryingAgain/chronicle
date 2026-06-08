@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next'
 import { store, type RecoveryContact } from '../lib/storage'
 import { generateArchive, generateGedcom, downloadFile, type ExportablePerson } from '../lib/export'
 import { importGedcom } from '../lib/gedcomImport'
-import { useApp } from '../context/AppContext'
+import { useApp, CHRONICLE_RELAY_URL } from '../context/AppContext'
 import type { UpdateStatus } from '../lib/appStorage'
 import { FamilyKeyPanel } from './FamilyKeyPanel'
 import { KeyRecoveryModal } from './KeyRecoveryModal'
@@ -72,6 +72,8 @@ function RelayStatusSection() {
   const [showLog, setShowLog] = useState(false)
   const isElectron = typeof window !== 'undefined' && (window as any).chronicleElectron
 
+  const bootstrapStatus = relayStatuses[CHRONICLE_RELAY_URL]
+
   const loadLog = async () => {
     if (isElectron && (window as any).chronicleElectron.getRelayLog) {
       const log = await (window as any).chronicleElectron.getRelayLog()
@@ -119,6 +121,25 @@ function RelayStatusSection() {
           ))
         )}
       </div>
+      {/* Bootstrap relay status */}
+      <div className="card" style={{ marginTop: 8, padding: 'var(--space-md) var(--space-lg)' }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', marginBottom: 4 }}>
+          Chronicle shared relay
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 13, color: bootstrapStatus === 'connected' ? 'var(--success)' : bootstrapStatus === 'connecting' ? 'var(--warn)' : 'var(--error)' }}>●</span>
+          <span style={{ fontSize: 13, fontWeight: 500, color: bootstrapStatus === 'connected' ? 'var(--success)' : bootstrapStatus === 'connecting' ? 'var(--warn)' : 'var(--ink-muted)' }}>
+            {bootstrapStatus === 'connected' ? 'Connected' : bootstrapStatus === 'connecting' ? 'Connecting…' : 'Disconnected'}
+          </span>
+        </div>
+        <div style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--ink-muted)', marginTop: 4 }}>
+          {CHRONICLE_RELAY_URL}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 4 }}>
+          Used for remote sync when direct connections aren't available.
+        </div>
+      </div>
+
       {isElectron && (
         <div className="card" style={{ marginTop: 8, padding: 'var(--space-md) var(--space-lg)' }}>
           <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', marginBottom: 4 }}>

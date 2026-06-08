@@ -69,6 +69,13 @@ export interface BroadcastSettings {
 let _relayPort = 4869
 export let LOCAL_RELAY_URL = `ws://127.0.0.1:${_relayPort}`
 
+/**
+ * Chronicle's shared bootstrap relay — used for remote sync when UPnP is
+ * unavailable. Instances connect to this on startup alongside their local
+ * relay. Events are signed and verified; the relay cannot tamper with data.
+ */
+export const CHRONICLE_RELAY_URL = 'wss://chronicle.plume.website'
+
 // Kick off the async resolution immediately — by the time the user reaches
 // the main screen (after onboarding/unlock) the port will be resolved.
 if (typeof window !== 'undefined' && (window as any).chronicleElectron?.relayPort) {
@@ -395,9 +402,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const sendJoinRequest = useCallback((targetNpub: string, targetRelay: string) => {
     if (!session) return
-    // Advertise external URL if UPnP is available — this is how the remote
-    // instance knows where to connect back to us. Fall back to local URL.
-    const myRelayUrl = externalRelayUrl ?? LOCAL_RELAY_URL
+    // Advertise external URL if UPnP is available, then bootstrap relay as
+    // fallback, then local URL as last resort.
+    const myRelayUrl = externalRelayUrl ?? CHRONICLE_RELAY_URL
     // Build and sign the join request event
     const event = buildJoinRequestEvent(
       session.npub, session.nsec,
@@ -444,7 +451,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const acceptEvent = buildJoinAcceptEvent(
         session.npub, session.nsec,
         req.requesterNpub, req.eventId,
-        externalRelayUrl ?? LOCAL_RELAY_URL,
+        externalRelayUrl ?? CHRONICLE_RELAY_URL,
       )
       if (poolRef.current) {
         const pool = poolRef.current
@@ -641,6 +648,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
         syncUnsubRef.current = startSync(client)
         // Initialise WebRTC PeerManager once relay is connected
         if (!peerManagerRef.current) initPeerManager(client)
+      }
+    })
+
+    // Connect to the Chronicle shared bootstrap relay for remote sync.
+    // This allows instances on different networks to find each other and
+    // exchange events even when UPnP is unavailable.
+    const bootstrapClient = pool.add(CHRONICLE_RELAY_URL)
+    bootstrapClient.onStatusChange((status) => {
+      setRelayStatuses({ ...pool.getStatuses() })
+      if (status === 'connected') {
+        // Fetch any events we missed and subscribe for live updates
+        fetchOnConnect(bootstrapClient).then(() => {
+          replayStoredFactClaims()
+          reconcilePersonAliases()
+          replayStoredMediaEvents()
+          setSyncVersion(v => v + 1)
+        }).catch(() => {})
+        startSync(bootstrapClient)
+        // Also use bootstrap relay for WebRTC signalling if PeerManager is ready
+        if (!peerManagerRef.current) initPeerManager(bootstrapClient)
       }
     })
 
