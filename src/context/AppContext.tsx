@@ -26,7 +26,7 @@ import { generateUserKeyMaterial, importKeyMaterial, nsecToHex, npubToHex } from
 import { encryptWithPassword, decryptWithPassword } from '../lib/storage'
 import { RelayPool, type RelayStatus } from '../lib/relay'
 import { broadcastQueue } from '../lib/queue'
-import { startSync, fetchOnConnect, ingestEvent, ingestAvatarEvent, ingestStoryEvent, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, replayStoredFactClaims, reconcilePersonAliases, replayStoredIdentityAnchors, setContactPubkeysProvider, setSyncUpdateHandler, setSignalEventHandler, getAvatar as rsGetAvatar, getStoriesForPerson as rsGetStoriesForPerson, replayStoredMediaEvents } from '../lib/relaySync'
+import { startSync, fetchOnConnect, ingestEvent, ingestAvatarEvent, ingestStoryEvent, setJoinRequestHandler, setJoinAcceptHandler, replayPendingJoinRequests, replayStoredFactClaims, reconcilePersonAliases, replayStoredIdentityAnchors, setContactPubkeysProvider, setSyncUpdateHandler, setSignalEventHandler, setSessionPubkey, getAvatar as rsGetAvatar, getStoriesForPerson as rsGetStoriesForPerson, replayStoredMediaEvents } from '../lib/relaySync'
 import { buildJoinRequestEvent, buildJoinAcceptEvent, buildRelationshipClaim, buildFactClaim, buildIdentityAnchor, buildAvatarEvent, buildStoryEvent } from '../lib/eventBuilder'
 import { processAvatarImage } from '../lib/media'
 import { ContactListManager, type Contact } from '../lib/contactList'
@@ -606,6 +606,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       joinQueueRef.current.add(req)
       setJoinRequests([...joinQueueRef.current.getPending()])
     })
+    // Register our own pubkey so relaySync can ignore our outbound join requests
+    if (session?.npub) setSessionPubkey(npubToHex(session.npub))
     // Replay any join requests that arrived before the handler was registered
     // (e.g. events stored during a previous session or before app was ready)
     replayPendingJoinRequests()

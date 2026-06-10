@@ -2429,23 +2429,18 @@ git push origin vX.X.X
 
 ---
 
-## Fix: One-way invite handshake — v1.1.7
+## Fix: Handshake double-fire + own join request echo — v1.1.8
 
-### Root cause
-Two bugs prevented the join request flow from completing with a single one-directional invite:
-
-**Bug 1 — JOIN_ACCEPT blocked by local relay allowlist**
-The local relay exempted JOIN_REQUEST (30091) from the allowlist check so unknown pubkeys could initiate a handshake, but JOIN_ACCEPT (30092) was not exempt. So when instance 1 accepted instance 2's request and published the JOIN_ACCEPT to instance 2's relay, it was blocked ("pubkey not in allowlist") because instance 1 wasn't yet in instance 2's allowlist. Instance 2 never received the accept, never fired `onJoinAcceptReceived`, and sync never started.
-
-**Bug 2 — Handshake events only published to one relay**
-JOIN_REQUEST was only published to `targetRelay` and JOIN_ACCEPT only to `req.requesterRelay`. For remote instances using the bootstrap relay, this meant a request sent to `wss://chronicle.plume.website` received an accept published only back to the requester's local relay — which the acceptor couldn't reach.
+### Problems fixed
+1. **Accept/reject prompt appearing twice** — JOIN_REQUEST and JOIN_ACCEPT events were arriving from both the local relay and the bootstrap relay subscriptions, firing `onJoinRequestReceived` twice and creating duplicate queue entries.
+2. **Instance 3 showing "pending connection request" for its own outbound request** — the requester's own JOIN_REQUEST was bouncing back from the shared relay and being ingested as an incoming request.
+3. **Duplicate contact entries after accept** — consequence of the double-fire.
 
 ### Fixes
-- `relay/server.js` — KIND_JOIN_ACCEPT (30092) is now also exempt from allowlist check
-- `src/context/AppContext.tsx` — `sendJoinRequest` publishes to both `targetRelay` and `CHRONICLE_RELAY_URL`; `acceptJoinRequest` publishes to both `req.requesterRelay` and `CHRONICLE_RELAY_URL`
+- `src/lib/relaySync.ts`
+  - Added `_dispatchedHandshakeIds` set — handshake events now deduplicated by event ID within a session (prevents double-dispatch from multiple relay subscriptions)
+  - Added `_sessionHexPubkey` + `setSessionPubkey()` export — JOIN_REQUEST events from our own pubkey are ignored (prevents requester seeing their own request as incoming)
+- `src/context/AppContext.tsx`
+  - Imports and calls `setSessionPubkey(npubToHex(session.npub))` when session starts
 
-### Expected behaviour after fix
-- Instance A generates invite → Instance B pastes it and sends join request → Instance A sees pending request, accepts → both sides connected. No two-way invite needed.
-- Works for both local instances (same machine) and remote instances (via bootstrap relay).
-
-### Version: v1.1.7 | Tests: 711/711 | TypeScript: clean | Build: clean
+### Version: v1.1.8 | Tests: 711/711 | TypeScript: clean | Build: clean

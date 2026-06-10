@@ -170,14 +170,29 @@ function scheduleSyncUpdate() {
   setTimeout(() => { _syncUpdatePending = false; onSyncUpdate?.() }, 200)
 }
 
+// Track handshake event IDs we've already dispatched this session to prevent
+// double-firing when the same event arrives from multiple relay subscriptions.
+const _dispatchedHandshakeIds = new Set<string>()
+
+// Session user's hex pubkey — used to ignore our own outbound join requests
+// that bounce back from the relay.
+let _sessionHexPubkey: string | null = null
+export function setSessionPubkey(hexPubkey: string): void {
+  _sessionHexPubkey = hexPubkey
+}
+
 export function ingestEvent(event: ChronicleEvent): boolean {
   console.log(`[ingestEvent] kind=${event.kind} from ${event.pubkey?.slice(0,8)}…`)
-  // JOIN_REQUEST and JOIN_ACCEPT are never deduplicated — the callback must
-  // fire every time they arrive so the UI can react even after a restart.
   const isHandshake = event.kind === EventKind.JOIN_REQUEST || event.kind === EventKind.JOIN_ACCEPT
+
   if (!isHandshake) {
     // Deduplicate all other events — skip if already stored
     if (store.getRawEvent(event.id)) return false
+  } else {
+    // Handshake events: store always (so replays work after restart) but only
+    // dispatch the callback once per session per event ID.
+    if (_dispatchedHandshakeIds.has(event.id)) return false
+    _dispatchedHandshakeIds.add(event.id)
   }
 
   store.addRawEvent(event)
@@ -210,6 +225,8 @@ export function ingestEvent(event: ChronicleEvent): boolean {
         ingestSamePersonLink(event)
         break
       case EventKind.JOIN_REQUEST: {
+        // Ignore our own join requests bouncing back from the relay
+        if (event.pubkey === _sessionHexPubkey) break
         const req = parseJoinRequest(event)
         if (req && onJoinRequestReceived) onJoinRequestReceived(req)
         break
