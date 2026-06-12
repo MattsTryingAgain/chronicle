@@ -2429,18 +2429,24 @@ git push origin vX.X.X
 
 ---
 
-## Fix: Handshake double-fire + own join request echo — v1.1.8
+## Fix: Join request routing + session pubkey filtering — v1.1.9
 
 ### Problems fixed
-1. **Accept/reject prompt appearing twice** — JOIN_REQUEST and JOIN_ACCEPT events were arriving from both the local relay and the bootstrap relay subscriptions, firing `onJoinRequestReceived` twice and creating duplicate queue entries.
-2. **Instance 3 showing "pending connection request" for its own outbound request** — the requester's own JOIN_REQUEST was bouncing back from the shared relay and being ingested as an incoming request.
-3. **Duplicate contact entries after accept** — consequence of the double-fire.
+1. **Join requests propagating to all relay subscribers** — instance 3 was receiving and processing join requests intended for instances 1 and 2, because the shared relay broadcasts all events to all subscribers and there was no recipient check.
+2. **JOIN_ACCEPT also unfiltered** — same issue for accept events.
 
 ### Fixes
 - `src/lib/relaySync.ts`
-  - Added `_dispatchedHandshakeIds` set — handshake events now deduplicated by event ID within a session (prevents double-dispatch from multiple relay subscriptions)
-  - Added `_sessionHexPubkey` + `setSessionPubkey()` export — JOIN_REQUEST events from our own pubkey are ignored (prevents requester seeing their own request as incoming)
-- `src/context/AppContext.tsx`
-  - Imports and calls `setSessionPubkey(npubToHex(session.npub))` when session starts
+  - Added `npubToHex` import from `./keys`
+  - `JOIN_REQUEST` case now checks `target` tag against `_sessionHexPubkey` — ignores requests not addressed to us
+  - `JOIN_ACCEPT` case now checks `requester` tag against `_sessionHexPubkey` — ignores accepts not addressed to us
+  - Both checks handle npub and hex formats in the tag value
 
-### Version: v1.1.8 | Tests: 711/711 | TypeScript: clean | Build: clean
+### Version: v1.1.9 | Tests: 711/711 | TypeScript: clean | Build: clean
+
+### Reset procedure for clean testing
+Delete these four files on each instance before relaunching:
+- `%APPDATA%\chronicle\chronicle.db`
+- `%APPDATA%\chronicle\relay-events.json`
+- `%APPDATA%\chronicle\allowlist.json`
+- `%APPDATA%\chronicle\keystore.json`

@@ -25,6 +25,7 @@ import type { RelationshipClaim, Acknowledgement, SamePersonLink } from './graph
 import { schemaVersionChecker } from './schemaVersion'
 import { parseJoinRequest, parseJoinAccept } from './joinRequest'
 import type { JoinRequest, JoinAccept } from './joinRequest'
+import { npubToHex } from './keys'
 import { scoreMatch } from './treeLinking'
 import { parseAvatarEvent, parseStoryEvent } from './eventBuilder'
 
@@ -225,13 +226,34 @@ export function ingestEvent(event: ChronicleEvent): boolean {
         ingestSamePersonLink(event)
         break
       case EventKind.JOIN_REQUEST: {
-        // Ignore our own join requests bouncing back from the relay
+        // Only process join requests addressed to us
+        const targetTag = event.tags.find(t => t[0] === 'target')?.[1]
+        if (_sessionHexPubkey && targetTag) {
+          // target tag may be npub or hex — normalise to hex for comparison
+          let targetHex = targetTag
+          try {
+            if (targetTag.startsWith('npub')) {
+              targetHex = npubToHex(targetTag)
+            }
+          } catch { /* ignore */ }
+          if (targetHex !== _sessionHexPubkey) break  // not for us
+        }
+        // Ignore our own outbound requests bouncing back from the relay
         if (event.pubkey === _sessionHexPubkey) break
         const req = parseJoinRequest(event)
         if (req && onJoinRequestReceived) onJoinRequestReceived(req)
         break
       }
       case EventKind.JOIN_ACCEPT: {
+        // Only process accepts addressed to us (requester tag matches our pubkey)
+        const requesterTag = event.tags.find(t => t[0] === 'requester')?.[1]
+        if (_sessionHexPubkey && requesterTag) {
+          let requesterHex = requesterTag
+          try {
+            if (requesterTag.startsWith('npub')) requesterHex = npubToHex(requesterTag)
+          } catch { /* ignore */ }
+          if (requesterHex !== _sessionHexPubkey) break  // not for us
+        }
         const accept = parseJoinAccept(event)
         if (accept && onJoinAcceptReceived) onJoinAcceptReceived(accept)
         break
