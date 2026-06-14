@@ -126,11 +126,17 @@ export function fetchOnConnect(client: RelayClient): Promise<SyncResult> {
   return new Promise((resolve) => {
     const result: SyncResult = { received: 0, ingested: 0, errors: 0 }
 
-    // No authors filter — relay is allowlist-gated, subscribe to all kinds.
-    // See startSync for rationale.
+    // Exclude JOIN_REQUEST and JOIN_ACCEPT from the historical fetch.
+    // These are one-time handshake events — re-processing them from relay
+    // history would re-surface old connection requests every time the app
+    // restarts or the local data is wiped. They are only handled when they
+    // arrive live via startSync (i.e. genuinely new, just published).
+    const HANDSHAKE_KINDS = new Set<number>([EventKind.JOIN_REQUEST, EventKind.JOIN_ACCEPT])
+    const fetchKinds = ALL_CHRONICLE_KINDS.filter(k => !HANDSHAKE_KINDS.has(k))
+
     const filters = [
       {
-        kinds: ALL_CHRONICLE_KINDS,
+        kinds: fetchKinds,
         limit: 500,
       },
     ]

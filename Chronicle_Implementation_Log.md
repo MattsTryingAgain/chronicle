@@ -2429,24 +2429,23 @@ git push origin vX.X.X
 
 ---
 
-## Fix: Join request routing + session pubkey filtering — v1.1.9
+## Fix: Stale handshake replay on reconnect — v1.1.10
 
-### Problems fixed
-1. **Join requests propagating to all relay subscribers** — instance 3 was receiving and processing join requests intended for instances 1 and 2, because the shared relay broadcasts all events to all subscribers and there was no recipient check.
-2. **JOIN_ACCEPT also unfiltered** — same issue for accept events.
+### Problem
+After wiping local data and restarting with the same seed phrase, Chronicle
+reconnected to `wss://chronicle.plume.website` and fetched all historical
+events including old JOIN_REQUEST (30091) and JOIN_ACCEPT (30092) events.
+These were re-processed as if they were new, surfacing old connection requests
+in the Connect tab and partially re-populating the tree from stale data.
 
-### Fixes
-- `src/lib/relaySync.ts`
-  - Added `npubToHex` import from `./keys`
-  - `JOIN_REQUEST` case now checks `target` tag against `_sessionHexPubkey` — ignores requests not addressed to us
-  - `JOIN_ACCEPT` case now checks `requester` tag against `_sessionHexPubkey` — ignores accepts not addressed to us
-  - Both checks handle npub and hex formats in the tag value
+### Fix
+`fetchOnConnect` now excludes JOIN_REQUEST and JOIN_ACCEPT from the historical
+fetch filter. Handshake events are only processed when they arrive live via
+`startSync` (genuinely new, just published). Historical handshakes on the relay
+are ignored entirely.
 
-### Version: v1.1.9 | Tests: 711/711 | TypeScript: clean | Build: clean
+### Files changed
+- `src/lib/relaySync.ts` — `fetchOnConnect` uses `fetchKinds` (ALL_CHRONICLE_KINDS
+  minus JOIN_REQUEST and JOIN_ACCEPT) instead of ALL_CHRONICLE_KINDS
 
-### Reset procedure for clean testing
-Delete these four files on each instance before relaunching:
-- `%APPDATA%\chronicle\chronicle.db`
-- `%APPDATA%\chronicle\relay-events.json`
-- `%APPDATA%\chronicle\allowlist.json`
-- `%APPDATA%\chronicle\keystore.json`
+### Version: v1.1.10 | Tests: 711/711 | TypeScript: clean | Build: clean
